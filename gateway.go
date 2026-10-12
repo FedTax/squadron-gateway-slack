@@ -96,19 +96,7 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 		return err
 	}
 	g.threadSpecs = specs
-	cp := g.readCheckpoint()
-	g.mu.Lock()
-	g.latest = cp.Latest
-	for id, ts := range cp.MissionThreads {
-		g.missionThreads[id] = ts
-	}
-	for key, ts := range cp.KeyThreads {
-		g.keyThreads[key] = ts
-	}
-	for ts, user := range cp.Requesters {
-		g.requesters[ts] = user
-	}
-	g.mu.Unlock()
+	g.loadCheckpoint()
 
 	api2 := slack.New(botToken, slack.OptionAppLevelToken(appToken))
 

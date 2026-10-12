@@ -91,3 +91,17 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 		t.Errorf("forgotten key still maps to %q", got)
 	}
 }
+
+func TestCheckpointNeverMovesBackward(t *testing.T) {
+	dir := t.TempDir()
+	g := newSlackGateway()
+	g.checkpointPath = filepath.Join(dir, "cp.json")
+
+	now := time.Now().UTC().Truncate(time.Second)
+	g.advanceCheckpoint(now)
+	g.advanceCheckpoint(now.Add(-time.Hour))
+
+	if got := g.readCheckpoint().Latest; !got.Equal(now) {
+		t.Errorf("an older event must not move the checkpoint back; got %v want %v", got, now)
+	}
+}

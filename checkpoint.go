@@ -40,24 +40,43 @@ func (g *slackGateway) readCheckpoint() checkpoint {
 	return cp
 }
 
-func (g *slackGateway) advanceCheckpoint(t time.Time) {
-	if t.IsZero() {
-		return
-	}
+// loadCheckpoint fills the gateway's state from the checkpoint file under
+// g.mu, so nothing reads half-loaded thread maps.
+func (g *slackGateway) loadCheckpoint() {
+	cp := g.readCheckpoint()
 	g.mu.Lock()
-	g.latest = t
-	g.mu.Unlock()
-	g.saveCheckpoint()
+	defer g.mu.Unlock()
+	g.latest = cp.Latest
+	for id, ts := range cp.MissionThreads {
+		g.missionThreads[id] = ts
+	}
+	for key, ts := range cp.KeyThreads {
+		g.keyThreads[key] = ts
+	}
+	for ts, user := range cp.Requesters {
+		g.requesters[ts] = user
+	}
 }
 
-// saveCheckpoint holds g.mu through the write so concurrent saves can't
-// interleave and leave a stale thread map on disk.
-func (g *slackGateway) saveCheckpoint() {
+// advanceCheckpoint only moves forward: catch-up and live events can arrive
+// out of order, and a step back would replay events already handled.
+func (g *slackGateway) advanceCheckpoint(t time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !t.After(g.latest) {
+		return
+	}
+	g.latest = t
+	g.writeCheckpointLocked()
+}
+
+// writeCheckpointLocked must run under g.mu, in the same critical section
+// as the change it persists; otherwise a slower writer could overwrite a
+// newer state on disk with its older snapshot.
+func (g *slackGateway) writeCheckpointLocked() {
 	if g.checkpointPath == "" {
 		return
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
 	data, err := json.Marshal(checkpoint{
 		Latest:         g.latest,
 		MissionThreads: g.missionThreads,

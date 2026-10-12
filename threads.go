@@ -145,8 +145,8 @@ func (g *slackGateway) rememberRun(missionID, ts string) {
 	}
 	g.mu.Lock()
 	g.missionThreads[missionID] = ts
+	g.writeCheckpointLocked()
 	g.mu.Unlock()
-	g.saveCheckpoint()
 }
 
 func (g *slackGateway) rememberKey(key, ts string) {
@@ -155,8 +155,8 @@ func (g *slackGateway) rememberKey(key, ts string) {
 	}
 	g.mu.Lock()
 	g.keyThreads[key] = ts
+	g.writeCheckpointLocked()
 	g.mu.Unlock()
-	g.saveCheckpoint()
 }
 
 func (g *slackGateway) forgetKey(key string) {
@@ -165,8 +165,8 @@ func (g *slackGateway) forgetKey(key string) {
 	}
 	g.mu.Lock()
 	delete(g.keyThreads, key)
+	g.writeCheckpointLocked()
 	g.mu.Unlock()
-	g.saveCheckpoint()
 }
 
 func (g *slackGateway) threadForKey(key string) string {
@@ -180,8 +180,8 @@ func (g *slackGateway) threadForKey(key string) string {
 func (g *slackGateway) rememberRequester(ts, userID string) {
 	g.mu.Lock()
 	g.requesters[ts] = userID
+	g.writeCheckpointLocked()
 	g.mu.Unlock()
-	g.saveCheckpoint()
 }
 
 // mentionFor returns the tag that notifies whoever started the thread's
