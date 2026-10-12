@@ -1,10 +1,13 @@
 # squadron-gateway-slack
 
-A Squadron gateway that surfaces `builtins.human.ask` questions in a
-Slack channel. When an agent asks a question, the gateway posts a
-message with quick-reply buttons (or a multi-select dropdown); the
-human's answer flows back to the agent via a button click or a thread
-reply.
+A Squadron gateway that runs missions out of one Slack channel. Each
+request gets a single top-level message — the `@squadron start …`
+mention that started it, or one the gateway posts when a run first
+needs input — and everything else about it goes in that message's
+thread: `builtins.human.ask` questions (answered with buttons, a
+multi-select dropdown, or an Answer modal), `builtins.gateway.post`
+posts, and lifecycle notifications. Whoever started the request is
+tagged on each of them.
 
 ## Setup walkthrough
 
@@ -39,8 +42,7 @@ public URL.
    Token Scopes** → **Add an OAuth Scope** for each of:
 
    - `chat:write` — post the question messages
-   - `channels:history` — read public-channel thread replies (free-text answers)
-   - `groups:history` — read private-channel thread replies (skip if you only post to public channels)
+   - `app_mentions:read` — hear `@squadron start …` requests
    - `channels:read` — only needed if you'll use `channel_name` instead of `channel_id`
    - `groups:read` — same, for private channels
    - `files:write` — **only needed if agents will attach files** via the `builtins.gateway.post` tool's `attachments` (squadron reads the referenced memory/scratchpad file and the gateway uploads it). Skip it if you don't use attachments.
@@ -53,15 +55,13 @@ public URL.
    squadron vars set slack_bot_token <xoxb-…>
    ```
 
-### 4. Subscribe to message events
+### 4. Subscribe to mention events
 
-So the gateway can hear thread replies (free-text answers):
+So the gateway can hear `@squadron start …` requests:
 
 1. Sidebar: **Event Subscriptions** → toggle **Enable Events** on.
-2. Under **Subscribe to bot events** → **Add Bot User Event** for:
-
-   - `message.channels`
-   - `message.groups` (skip if no private channels)
+2. Under **Subscribe to bot events** → **Add Bot User Event** for
+   `app_mention`.
 
 3. Click **Save Changes**. If Slack asks you to reinstall the app
    (because scopes changed), do it.
@@ -103,9 +103,23 @@ gateway "slack" {
     app_token       = vars.slack_app_token
     channel_id      = vars.slack_channel_id
     checkpoint_path = "${path.cwd}/.squadron/slack-gateway.json"
+    mcp_url         = "http://localhost:8090/mcp"
+    mcp_token       = vars.mcp_host_secret
   }
 }
+
+mcp_host {
+  enabled = true
+  port    = 8090
+  secret  = vars.mcp_host_secret
+}
 ```
+
+`mcp_url` points at squadron's own [MCP host](https://github.com/mlund01/squadron).
+The gateway SDK only lets a gateway list and answer questions, so the
+gateway uses MCP to start missions (`run_mission`) and to find the thread
+of a run it didn't start (`get_run_details`). Without it, questions and
+posts still work, but missions can't be started from Slack.
 
 Restart squadron. The log should show `gateway "slack" started` and
 something like `slack gateway ready (channel=C0123…, bot=U0123…)`.
@@ -119,12 +133,50 @@ The next `builtins.human.ask` call lands in your channel.
 | `app_token`       | yes      | App-Level Token (`xapp-…`) with `connections:write`. Use a `secret` variable. |
 | `channel_id`      | one of   | Slack channel ID (e.g. `C0123456789`).                                |
 | `channel_name`    | one of   | Channel name (e.g. `general` or `#general`). Resolved at startup; needs `channels:read` / `groups:read`. |
-| `checkpoint_path` | optional | Where the gateway persists the last event timestamp it processed. Defaults to `./.squadron-slack-gateway.json`. |
+| `checkpoint_path` | optional | Where the gateway persists the last event timestamp it processed and each mission's request thread. Defaults to `./.squadron-slack-gateway.json`. |
+| `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
+| `mcp_token`       | optional | The MCP host's `secret`, sent as a Bearer token. Use a `secret` variable. |
 
 Set exactly one of `channel_id` or `channel_name`. `channel_id` is the
 most stable handle — renaming a channel won't break the gateway.
 `channel_name` is friendlier but pays a startup paginated REST round-
 trip and breaks if the channel is renamed.
+
+## Starting a mission
+
+Mention the bot at the top level of the channel:
+
+```
+@squadron start rate_triage issue=DEV-123
+```
+
+Each `input=value` becomes a mission input (values can't contain
+spaces). The gateway also passes the mention's timestamp as the
+`slack_thread` input and replies in its thread with the run id.
+
+## Keeping a request in one thread
+
+Questions and notifications reach the gateway with their mission id. A
+run the gateway started is already mapped to its thread. Any other run
+is looked up through MCP: if it has a `slack_thread` input, it joins that
+thread. Squadron records no link between a mission and the one it
+routes to, so to keep a chained mission in the same thread, declare the
+input on every mission in the chain and pass it along in the route:
+
+```hcl
+input "slack_thread" {
+  type        = "string"
+  description = "Slack request thread; pass it unchanged to any mission this one routes to."
+  default     = ""
+}
+```
+
+For `builtins.gateway.post`, set `thread` to the mission's
+`slack_thread` input to reply in the thread.
+
+A run with no thread gets one the first time it asks a question: the
+gateway posts a top-level "<mission> needs input" message and threads
+the question under it.
 
 ## What the operator sees
 
@@ -141,9 +193,10 @@ The schemas are identical except for the past 24 hours of writes.
 
 Click a button to answer. For multi-select questions (`multi_select:
 true` on the agent's tool call) the channel shows a multi-select
-dropdown picker instead of buttons. For free-text questions, **reply
-in the message's thread** and the body of your reply becomes the
-answer.
+dropdown picker instead of buttons. For free-text questions, click
+**Answer** and type the answer in the modal. Thread replies aren't read
+as answers: a request thread can hold several open questions, and a
+reply can't say which one it answers.
 
 When a question is resolved (here, in Slack, in Command Center, or
 anywhere else), the message is edited to strike through the question

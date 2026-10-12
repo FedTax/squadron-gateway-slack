@@ -45,22 +45,6 @@ func TestSlackResponderID(t *testing.T) {
 	}
 }
 
-func TestLookupToolCallByMessageTS(t *testing.T) {
-	messages := map[string]string{
-		"tc-1": "1700000000.000100",
-		"tc-2": "1700000000.000200",
-	}
-	if got := lookupToolCallByMessageTS(messages, "1700000000.000200"); got != "tc-2" {
-		t.Errorf("got %q; want tc-2", got)
-	}
-	if got := lookupToolCallByMessageTS(messages, "1700000000.999999"); got != "" {
-		t.Errorf("unmatched ts should return empty string, got %q", got)
-	}
-	if got := lookupToolCallByMessageTS(messages, ""); got != "" {
-		t.Errorf("empty ts should return empty string, got %q", got)
-	}
-}
-
 func TestDecodeInteractionResponseRoutesByActionID(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -186,5 +170,61 @@ func TestFakeAPIErrorPath(t *testing.T) {
 
 	if _, err := g.api.ResolveHumanInput(context.Background(), "tc", "x", "u"); err == nil {
 		t.Error("expected error from fake API")
+	}
+}
+
+func TestParseStartCommand(t *testing.T) {
+	mission, inputs, err := parseStartCommand("<@U0BOT> start rate_triage issue=DEV-123 note=a&amp;b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mission != "rate_triage" {
+		t.Errorf("mission: got %q", mission)
+	}
+	if inputs["issue"] != "DEV-123" || inputs["note"] != "a&b" {
+		t.Errorf("inputs: got %+v", inputs)
+	}
+
+	for _, text := range []string{
+		"<@U0BOT> hello",
+		"<@U0BOT> start",
+		"<@U0BOT> start m issue",
+		"<@U0BOT> start m slack_thread=1",
+	} {
+		if _, _, err := parseStartCommand(text); err == nil {
+			t.Errorf("%q: expected an error", text)
+		}
+	}
+}
+
+func TestDecodeInteractionResponseIgnoresAnswerButton(t *testing.T) {
+	if _, _, ok := decodeInteractionResponse(&slack.BlockAction{ActionID: encodeAnswerCustomID("tc-1")}); ok {
+		t.Error("the Answer button opens a modal; it must not resolve the question")
+	}
+}
+
+func TestAnswerFromSubmission(t *testing.T) {
+	cb := slack.InteractionCallback{View: slack.View{
+		CallbackID:      answerCallbackID,
+		PrivateMetadata: "tc-1",
+		State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{
+			answerBlockID: {answerActionID: {Value: "  use staging  "}},
+		}},
+	}}
+	tc, answer, ok := answerFromSubmission(cb)
+	if !ok || tc != "tc-1" || answer != "use staging" {
+		t.Errorf("got tc=%q answer=%q ok=%v", tc, answer, ok)
+	}
+
+	cb.View.CallbackID = "someone-else"
+	if _, _, ok := answerFromSubmission(cb); ok {
+		t.Error("a submission from another modal must be ignored")
+	}
+}
+
+func TestAnswerModalCarriesToolCallID(t *testing.T) {
+	m := answerModal("tc-1")
+	if m.PrivateMetadata != "tc-1" || m.CallbackID != answerCallbackID {
+		t.Errorf("got metadata=%q callback=%q", m.PrivateMetadata, m.CallbackID)
 	}
 }

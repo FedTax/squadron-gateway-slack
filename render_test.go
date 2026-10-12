@@ -99,7 +99,7 @@ func TestBuildMessageBody(t *testing.T) {
 				MultiSelect: true,
 			},
 			wantContain: []string{"Pick one or more from the dropdown"},
-			wantOmit:    []string{"Reply in the thread"},
+			wantOmit:    []string{"Click Answer"},
 		},
 		{
 			name: "single-select does NOT add the dropdown hint",
@@ -107,14 +107,14 @@ func TestBuildMessageBody(t *testing.T) {
 				Question: "Pick one.",
 				Choices:  []string{"A", "B"},
 			},
-			wantOmit: []string{"dropdown", "Reply in the thread"},
+			wantOmit: []string{"dropdown", "Click Answer"},
 		},
 		{
-			name: "free-text (no choices) prompts a thread reply",
+			name: "free-text (no choices) prompts the Answer button",
 			rec: gatewaysdk.HumanInputRecord{
 				Question: "What do you think?",
 			},
-			wantContain: []string{"Reply in the thread"},
+			wantContain: []string{"Click Answer"},
 		},
 		{
 			name: "additional context renders under a Context header",
@@ -193,20 +193,35 @@ func TestBuildResolvedBodyExpandsMultiSelect(t *testing.T) {
 	}
 }
 
-func TestBuildBlocksFreeTextHasNoInteractiveBlock(t *testing.T) {
+func TestBuildBlocksFreeTextHasAnswerButton(t *testing.T) {
 	blocks := buildBlocks(gatewaysdk.HumanInputRecord{
 		ToolCallID: "tc",
 		Question:   "What do you think?",
-	})
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block (section only), got %d", len(blocks))
+	}, "")
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks (section + Answer button), got %d", len(blocks))
 	}
-	section, ok := blocks[0].(*slack.SectionBlock)
+	actions, ok := blocks[1].(*slack.ActionBlock)
 	if !ok {
-		t.Fatalf("expected SectionBlock, got %T", blocks[0])
+		t.Fatalf("expected ActionBlock, got %T", blocks[1])
 	}
-	if section.Accessory != nil {
-		t.Errorf("free-text section should have no accessory, got %+v", section.Accessory)
+	if len(actions.Elements.ElementSet) != 1 {
+		t.Fatalf("expected 1 button, got %d", len(actions.Elements.ElementSet))
+	}
+	btn, ok := actions.Elements.ElementSet[0].(*slack.ButtonBlockElement)
+	if !ok {
+		t.Fatalf("expected ButtonBlockElement, got %T", actions.Elements.ElementSet[0])
+	}
+	if tc, ok := decodeAnswerCustomID(btn.ActionID); !ok || tc != "tc" {
+		t.Errorf("Answer button action_id %q must decode to tc, got %q ok=%v", btn.ActionID, tc, ok)
+	}
+}
+
+func TestBuildBlocksPrependsMention(t *testing.T) {
+	blocks := buildBlocks(gatewaysdk.HumanInputRecord{ToolCallID: "tc", Question: "Q?"}, "<@U1> ")
+	section := blocks[0].(*slack.SectionBlock)
+	if !strings.HasPrefix(section.Text.Text, "<@U1> ") {
+		t.Errorf("section text should start with the mention, got %q", section.Text.Text)
 	}
 }
 
@@ -215,7 +230,7 @@ func TestBuildBlocksSingleSelectUsesButtons(t *testing.T) {
 		ToolCallID: "tc-1",
 		Question:   "Pick one.",
 		Choices:    []string{"A", "B", "C"},
-	})
+	}, "")
 	// section + actions = 2 blocks
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (section + actions), got %d", len(blocks))
@@ -243,7 +258,7 @@ func TestBuildBlocksMultiSelectIsSectionAccessory(t *testing.T) {
 		Question:    "Pick any.",
 		Choices:     []string{"A", "B", "C"},
 		MultiSelect: true,
-	})
+	}, "")
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block (section with accessory), got %d", len(blocks))
 	}

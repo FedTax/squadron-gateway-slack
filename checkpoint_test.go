@@ -12,14 +12,14 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	g := newSlackGateway()
 	g.checkpointPath = filepath.Join(dir, "cp.json")
 
-	if got := g.readCheckpoint(); !got.IsZero() {
+	if got := g.readCheckpoint().Latest; !got.IsZero() {
 		t.Errorf("readCheckpoint with no file should return zero time, got %v", got)
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
 	g.advanceCheckpoint(now)
 
-	if got := g.readCheckpoint(); !got.Equal(now) {
+	if got := g.readCheckpoint().Latest; !got.Equal(now) {
 		t.Errorf("readCheckpoint after advance: got %v, want %v", got, now)
 	}
 }
@@ -33,7 +33,7 @@ func TestCheckpointAdvanceIgnoresZeroTime(t *testing.T) {
 	g.advanceCheckpoint(now)
 	g.advanceCheckpoint(time.Time{})
 
-	if got := g.readCheckpoint(); !got.Equal(now) {
+	if got := g.readCheckpoint().Latest; !got.Equal(now) {
 		t.Errorf("zero advanceCheckpoint should not clobber a previous valid value; got %v want %v", got, now)
 	}
 }
@@ -43,7 +43,7 @@ func TestCheckpointIsNoOpWhenPathEmpty(t *testing.T) {
 	g.checkpointPath = ""
 
 	g.advanceCheckpoint(time.Now())
-	if got := g.readCheckpoint(); !got.IsZero() {
+	if got := g.readCheckpoint().Latest; !got.IsZero() {
 		t.Errorf("read with empty path should return zero, got %v", got)
 	}
 }
@@ -55,7 +55,30 @@ func TestCheckpointReadIgnoresMalformedFile(t *testing.T) {
 	if err := os.WriteFile(g.checkpointPath, []byte("not json"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got := g.readCheckpoint(); !got.IsZero() {
+	if got := g.readCheckpoint().Latest; !got.IsZero() {
 		t.Errorf("malformed checkpoint should fall back to zero time, got %v", got)
+	}
+}
+
+func TestCheckpointPersistsThreads(t *testing.T) {
+	dir := t.TempDir()
+	g := newSlackGateway()
+	g.checkpointPath = filepath.Join(dir, "cp.json")
+
+	g.rememberRequester("1700000000.000100", "U1")
+	g.rememberThread("mission-1", "1700000000.000100")
+
+	cp := g.readCheckpoint()
+	if cp.MissionThreads["mission-1"] != "1700000000.000100" {
+		t.Errorf("mission thread not persisted: %+v", cp.MissionThreads)
+	}
+	if cp.Requesters["1700000000.000100"] != "U1" {
+		t.Errorf("requester not persisted: %+v", cp.Requesters)
+	}
+	if got := g.mentionFor("1700000000.000100"); got != "<@U1> " {
+		t.Errorf("mentionFor: got %q", got)
+	}
+	if got := g.mentionFor("1700000000.999999"); got != "" {
+		t.Errorf("mentionFor unknown thread: got %q", got)
 	}
 }

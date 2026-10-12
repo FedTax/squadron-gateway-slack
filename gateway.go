@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	gatewaysdk "github.com/mlund01/squadron-gateway-sdk"
 	"github.com/slack-go/slack"
@@ -26,7 +27,17 @@ type slackGateway struct {
 	// resolved it).
 	messages map[string]string
 
+	// mission id → request thread ts, and request thread ts → requester.
+	// Persisted in the checkpoint; see threads.go.
+	missionThreads map[string]string
+	requesters     map[string]string
+
+	// nil when mcp_url isn't set: missions can't be started from Slack and
+	// runs the gateway didn't start can't be traced to their thread.
+	mcp *squadronMCP
+
 	checkpointPath string
+	latest         time.Time
 
 	// cancels the socket-mode run loop on Shutdown.
 	cancel context.CancelFunc
@@ -34,7 +45,11 @@ type slackGateway struct {
 }
 
 func newSlackGateway() *slackGateway {
-	return &slackGateway{messages: map[string]string{}}
+	return &slackGateway{
+		messages:       map[string]string{},
+		missionThreads: map[string]string{},
+		requesters:     map[string]string{},
+	}
 }
 
 func (g *slackGateway) Configure(ctx context.Context, settings map[string]string, api gatewaysdk.SquadronAPI) error {
@@ -66,6 +81,19 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 	if g.checkpointPath == "" {
 		g.checkpointPath = ".squadron-slack-gateway.json"
 	}
+	if mcpURL := strings.TrimSpace(settings["mcp_url"]); mcpURL != "" {
+		g.mcp = &squadronMCP{url: mcpURL, token: strings.TrimSpace(settings["mcp_token"])}
+	}
+	cp := g.readCheckpoint()
+	g.mu.Lock()
+	g.latest = cp.Latest
+	for id, ts := range cp.MissionThreads {
+		g.missionThreads[id] = ts
+	}
+	for ts, user := range cp.Requesters {
+		g.requesters[ts] = user
+	}
+	g.mu.Unlock()
 
 	api2 := slack.New(botToken, slack.OptionAppLevelToken(appToken))
 
@@ -156,8 +184,11 @@ func (g *slackGateway) Shutdown(ctx context.Context) error {
 // live-event handlers. Per-row failures are logged so one bad row
 // doesn't block the rest.
 func (g *slackGateway) catchUp(ctx context.Context) error {
+	g.mu.Lock()
+	since := g.latest
+	g.mu.Unlock()
 	rows, _, err := g.api.ListHumanInputs(ctx, gatewaysdk.HumanInputFilter{
-		Since:       g.readCheckpoint(),
+		Since:       since,
 		OldestFirst: true,
 		Limit:       200,
 	})

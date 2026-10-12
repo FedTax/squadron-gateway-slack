@@ -21,13 +21,16 @@ func buildFallbackText(rec gatewaysdk.HumanInputRecord) string {
 // Kit blocks. Returned slice is ready to pass to MsgOptionBlocks.
 //
 // Layout depends on picker shape:
-//   - free-text → one section block with the body
+//   - free-text → section block + an Answer button that opens a modal
 //   - single-choice → section block + actions block of buttons
 //   - multi-select → section block whose accessory is the multi_static_select
 //     element (Slack rejects multi-selects inside actions blocks; they're
 //     only valid as section accessories or in input blocks).
-func buildBlocks(rec gatewaysdk.HumanInputRecord) []slack.Block {
-	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec), false, false)
+//
+// mention is prepended to the body so the requester is notified; "" for
+// none.
+func buildBlocks(rec gatewaysdk.HumanInputRecord, mention string) []slack.Block {
+	bodyText := slack.NewTextBlockObject(slack.MarkdownType, mention+buildMessageBody(rec), false, false)
 
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		return []slack.Block{
@@ -38,8 +41,31 @@ func buildBlocks(rec gatewaysdk.HumanInputRecord) []slack.Block {
 	blocks := []slack.Block{slack.NewSectionBlock(bodyText, nil, nil)}
 	if len(rec.Choices) > 0 {
 		blocks = append(blocks, buildButtonsBlock(rec))
+	} else {
+		blocks = append(blocks, buildAnswerButtonBlock(rec))
 	}
 	return blocks
+}
+
+// buildAnswerButtonBlock opens the answer modal. Free-text answers come from
+// the modal rather than thread replies because a request thread can hold
+// several open questions, and a reply can't say which one it answers.
+func buildAnswerButtonBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
+	btn := slack.NewButtonBlockElement(
+		encodeAnswerCustomID(rec.ToolCallID),
+		"",
+		slack.NewTextBlockObject(slack.PlainTextType, "Answer", false, false),
+	)
+	return slack.NewActionBlock("sq-answer-"+rec.ToolCallID, btn)
+}
+
+// threadTitle is the top-level message for a run that asks a question
+// before anything else gave it a thread.
+func threadTitle(rec gatewaysdk.HumanInputRecord) string {
+	if rec.MissionName != "" {
+		return "*" + rec.MissionName + "* needs input"
+	}
+	return "Mission run `" + rec.MissionID + "` needs input"
 }
 
 // buildMessageBody renders the question + context as Slack mrkdwn.
@@ -59,7 +85,7 @@ func buildMessageBody(rec gatewaysdk.HumanInputRecord) string {
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		b.WriteString("\n_Pick one or more from the dropdown below._")
 	} else if len(rec.Choices) == 0 {
-		b.WriteString("\n_Reply in the thread to answer._")
+		b.WriteString("\n_Click Answer to reply._")
 	}
 	if rec.AdditionalContext != "" {
 		b.WriteString("\n\n_Context_\n")
