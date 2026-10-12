@@ -29,3 +29,5 @@ require (
 	google.golang.org/grpc v1.70.0 // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
 )
+
+replace github.com/mlund01/squadron-gateway-sdk => github.com/FedTax/squadron-gateway-sdk v0.0.0-20261012214547-4ed964f4b9ee

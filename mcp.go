@@ -37,24 +37,6 @@ func (s *squadronMCP) startMission(ctx context.Context, name string, inputs map[
 	return out.MissionID, nil
 }
 
-type runDetails struct {
-	MissionName string         `json:"missionName"`
-	Inputs      map[string]any `json:"inputs"`
-}
-
-// getRunDetails calls get_run_details for the run's mission name and inputs.
-func (s *squadronMCP) getRunDetails(ctx context.Context, missionID string) (runDetails, error) {
-	text, err := s.callTool(ctx, "get_run_details", map[string]any{"run_id": missionID})
-	if err != nil {
-		return runDetails{}, err
-	}
-	var out runDetails
-	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		return runDetails{}, fmt.Errorf("get_run_details result: %w", err)
-	}
-	return out, nil
-}
-
 // callTool opens a short-lived session per call: these calls are rare (one
 // per started mission or unknown run), so holding a session open would only
 // add reconnect handling.

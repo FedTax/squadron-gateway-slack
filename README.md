@@ -154,39 +154,30 @@ start, only you see the error.
 
 ## Keeping a request in one thread
 
-Each request gets one top-level message and everything else goes in its
-thread. Questions and notifications reach the gateway with their mission
-id. A run the gateway started is already mapped to its thread. Any other
-run (chained, resumed, or started elsewhere) is placed by its **thread
-key**. Squadron records no link between a mission and the one it routes
-to, so the key is how a later run finds the request it belongs to.
+Each request gets one top-level message, and everything else about it
+goes in that message's thread:
 
-Keys and titles are set per mission in the `threads` setting, as
-[text/template](https://pkg.go.dev/text/template) strings over the
-run's inputs:
+- A run started from `/squadron` uses the message the gateway posts
+  when it starts the run.
+- `builtins.gateway.post` with `thread` set to a key naming the request
+  (e.g. its ticket key) replies in that request's thread. A run that
+  posts under a key joins that thread, so its later questions and
+  notifications go there too. That is how a chained or resumed run finds
+  its request: squadron records no link between a mission and the one
+  it routes to.
+- With `root: true`, the post becomes the request's top-level message:
+  posted when the request has none, otherwise edited in place. Missions
+  use this to keep a current summary at the top of the thread, e.g.
 
-```hcl
-threads = <<-EOT
-  {
-    "rate_triage":   {"key": "{{.issue}}", "title": "{{.issue}}: rate ticket"},
-    "rate_fix":      {"key": "{{.issue}}", "title": "{{.issue}}: rate ticket"},
-    "rate_finalize": {"key": "{{.issue}}", "title": "{{.issue}}: rate ticket"}
-  }
-EOT
-```
-
-- Runs whose keys render the same share a thread, so prefix a key when
-  unrelated missions could render the same value.
-- `title` is the top-level message when the gateway has to start the
-  thread itself (the run's first question arrived before any thread
-  existed). Without one, the gateway posts `<mission>: <question summary>`.
-- A key that references an input the run doesn't have isn't used, and
-  the run gets a thread of its own.
-- For `builtins.gateway.post`, set `thread` to the request's key (e.g.
-  the ticket key). The post replies in that thread, or becomes the
-  request's top-level message when it has none yet.
-- Starting a request for a key that already has a thread moves the key
-  to the new thread.
+  ```
+  *<https://…/browse/DEV-8212|DEV-8212>*
+  Some rates are wrong in X, Y and Z.
+  Cause: …
+  Status: fixing
+  ```
+- A run that asks a question before it has a thread gets a top-level
+  message of `*<mission>*: <question summary>`, which the mission can
+  later rewrite with `root`.
 
 ## What the operator sees
 

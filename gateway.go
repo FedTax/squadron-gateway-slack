@@ -34,9 +34,6 @@ type slackGateway struct {
 	keyThreads     map[string]string
 	requesters     map[string]string
 
-	// mission name → thread key/title templates, from the `threads` setting.
-	threadSpecs map[string]threadSpec
-
 	// nil when mcp_url isn't set: missions can't be started from Slack and
 	// runs the gateway didn't start can't be traced to their thread.
 	mcp *squadronMCP
@@ -54,7 +51,6 @@ func newSlackGateway() *slackGateway {
 		messages:       map[string]string{},
 		missionThreads: map[string]string{},
 		keyThreads:     map[string]string{},
-		threadSpecs:    map[string]threadSpec{},
 		requesters:     map[string]string{},
 	}
 }
@@ -91,11 +87,6 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 	if mcpURL := strings.TrimSpace(settings["mcp_url"]); mcpURL != "" {
 		g.mcp = &squadronMCP{url: mcpURL, token: strings.TrimSpace(settings["mcp_token"])}
 	}
-	specs, err := parseThreadSpecs(strings.TrimSpace(settings["threads"]))
-	if err != nil {
-		return err
-	}
-	g.threadSpecs = specs
 	g.loadCheckpoint()
 
 	api2 := slack.New(botToken, slack.OptionAppLevelToken(appToken))
@@ -160,7 +151,7 @@ func (g *slackGateway) OnNotification(ctx context.Context, rec gatewaysdk.Notifi
 }
 
 func (g *slackGateway) PostMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) error {
-	return g.postMessage(ctx, req.Payload, req.Attachments)
+	return g.postMessage(ctx, req)
 }
 
 func (g *slackGateway) MessageToolSpec(ctx context.Context) (gatewaysdk.MessageToolSpec, error) {
