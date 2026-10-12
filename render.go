@@ -26,11 +26,8 @@ func buildFallbackText(rec gatewaysdk.HumanInputRecord) string {
 //   - multi-select → section block whose accessory is the multi_static_select
 //     element (Slack rejects multi-selects inside actions blocks; they're
 //     only valid as section accessories or in input blocks).
-//
-// mention is prepended to the body so the requester is notified; "" for
-// none.
-func buildBlocks(rec gatewaysdk.HumanInputRecord, mention string) []slack.Block {
-	bodyText := slack.NewTextBlockObject(slack.MarkdownType, mention+buildMessageBody(rec), false, false)
+func buildBlocks(rec gatewaysdk.HumanInputRecord) []slack.Block {
+	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec), false, false)
 
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		return []slack.Block{

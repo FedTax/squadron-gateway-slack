@@ -28,6 +28,10 @@ func (g *slackGateway) runSocketEvents(ctx context.Context) {
 				if !ok {
 					continue
 				}
+				if cb.Type == slack.InteractionTypeViewSubmission && cb.View.CallbackID == startCallbackID {
+					g.onStartSubmitted(ctx, evt.Request, cb)
+					continue
+				}
 				if evt.Request != nil {
 					g.socket.Ack(*evt.Request)
 				}
@@ -57,10 +61,6 @@ func (g *slackGateway) runSocketEvents(ctx context.Context) {
 func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCallback) {
 	switch cb.Type {
 	case slack.InteractionTypeViewSubmission:
-		if cb.View.CallbackID == startCallbackID {
-			g.startFromSubmission(ctx, cb)
-			return
-		}
 		toolCallID, answer, ok := answerFromSubmission(cb)
 		if !ok {
 			return

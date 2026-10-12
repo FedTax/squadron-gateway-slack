@@ -94,14 +94,19 @@ func (g *slackGateway) rememberRequester(ts, userID string) {
 	g.mu.Unlock()
 }
 
-// mentionFor returns the tag that notifies whoever started the thread's
-// request, or "" for a thread nobody started from Slack.
-func (g *slackGateway) mentionFor(ts string) string {
+// requesterLine names whoever started the request on its top-level
+// message. Slack makes a user mentioned in a thread's parent follow the
+// thread, so the requester hears about replies without each one tagging them.
+func (g *slackGateway) requesterLine(ts string) string {
 	g.mu.Lock()
 	user := g.requesters[ts]
 	g.mu.Unlock()
 	if user == "" {
 		return ""
 	}
-	return "<@" + user + "> "
+	return requesterText(user)
+}
+
+func requesterText(user string) string {
+	return "Requester: <@" + user + ">"
 }

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
 )
 
 // /squadron opens a form instead of parsing typed text: the mission is
@@ -148,26 +150,60 @@ func startInputsFromSubmission(cb slack.InteractionCallback) (mission string, in
 	return mission, inputs, true
 }
 
-// startFromSubmission starts the mission and posts the request's top-level
-// message, which the mission can later rewrite with what it learns.
-func (g *slackGateway) startFromSubmission(ctx context.Context, cb slack.InteractionCallback) {
+// onStartSubmitted starts the run a submitted start form describes. Slack
+// only takes field errors in the submission's ack, so the ack waits on
+// run_mission; a bad value then shows on its field and the form stays open
+// for the user to correct instead of being filled in again.
+func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Request, cb slack.InteractionCallback) {
 	mission, inputs, ok := startInputsFromSubmission(cb)
 	if !ok {
+		g.ack(req)
 		return
 	}
 	missionID, err := g.mcp.startMission(ctx, mission, inputs)
 	if err != nil {
+		if errs := startFieldErrors(cb, err); errs != nil {
+			g.ack(req, slack.NewErrorsViewSubmissionResponse(errs))
+			return
+		}
+		g.ack(req)
 		g.ephemeral(ctx, g.channelID, cb.User.ID, fmt.Sprintf("Couldn't start `%s`: %v", mission, err))
 		return
 	}
+	g.ack(req)
 	_, ts, err := g.client.PostMessageContext(ctx, g.channelID,
-		slack.MsgOptionText(fmt.Sprintf("<@%s> started *%s* (run `%s`)", cb.User.ID, mission, missionID), false))
+		slack.MsgOptionText(fmt.Sprintf("*%s* (run `%s`)\n%s", mission, missionID, requesterText(cb.User.ID)), false))
 	if err != nil {
 		log.Printf("post request message for %s: %v", missionID, err)
 		return
 	}
 	g.rememberRequester(ts, cb.User.ID)
 	g.rememberRun(missionID, ts)
+}
+
+// squadron names the input it rejects as `input 'name'` or
+// `required input 'name'` (config/mission.go ResolveInputValues).
+var rejectedInput = regexp.MustCompile(`input '([^']+)'`)
+
+// startFieldErrors places a run_mission error on the form field it is
+// about, or returns nil when it isn't about one of the form's inputs.
+func startFieldErrors(cb slack.InteractionCallback, err error) map[string]string {
+	m := rejectedInput.FindStringSubmatch(err.Error())
+	if m == nil || cb.View.State == nil {
+		return nil
+	}
+	for blockID := range cb.View.State.Values {
+		if strings.HasPrefix(blockID, startInputPrefix) && strings.HasSuffix(blockID, "::"+m[1]) {
+			return map[string]string{blockID: err.Error()}
+		}
+	}
+	return nil
+}
+
+func (g *slackGateway) ack(req *socketmode.Request, payload ...any) {
+	if req != nil {
+		g.socket.Ack(*req, payload...)
+	}
 }
 
 func (g *slackGateway) ephemeral(ctx context.Context, channel, user, text string) {

@@ -6,8 +6,9 @@ when someone starts a mission with `/squadron`, or one it posts the first time a
 needs to say something — and everything else about it goes in that
 message's thread: `builtins.human.ask` questions (answered with buttons, a
 multi-select dropdown, or an Answer modal), `builtins.gateway.post`
-posts, and lifecycle notifications. Whoever started the request is
-tagged on each of them.
+posts, and lifecycle notifications. The top-level message names whoever
+started the request (`Requester: @…`), which makes Slack have them follow
+the thread, so replies don't tag them.
 
 ## Setup walkthrough
 
@@ -148,9 +149,10 @@ inputs aren't shown. Values for non-string inputs are entered as JSON,
 e.g. `["CO", "PA"]`.
 
 On **Start**, the gateway runs the mission and posts the request's
-top-level message in the configured channel, tagging you. Everything
-the run says afterwards goes in that message's thread. If the run can't
-start, only you see the error.
+top-level message in the configured channel, naming you as the
+requester. Everything the run says afterwards goes in that message's
+thread. If squadron rejects an input, the error shows on that field and
+the form stays open; any other start error is sent to you alone.
 
 ## Keeping a request in one thread
 
@@ -178,6 +180,13 @@ goes in that message's thread:
 - A run that asks a question before it has a thread gets a top-level
   message of `*<mission>*: <question summary>`, which the mission can
   later rewrite with `root`.
+- A rewrite with `root` keeps the `Requester: @…` line, so the requester
+  keeps following the thread.
+- A mission's `notification` block (`mission_completed`,
+  `mission_failed` or `all`) posts in the run's thread, with the error
+  when the run failed. A run with no thread posts nothing, so a request
+  never gets a second top-level message. A notification with its own
+  `channel` posts top-level in that channel.
 
 ## What the operator sees
 

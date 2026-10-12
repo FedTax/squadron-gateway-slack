@@ -79,11 +79,11 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	if cp.Requesters["1700000000.000100"] != "U1" {
 		t.Errorf("requester not persisted: %+v", cp.Requesters)
 	}
-	if got := g.mentionFor("1700000000.000100"); got != "<@U1> " {
-		t.Errorf("mentionFor: got %q", got)
+	if got := g.requesterLine("1700000000.000100"); got != "Requester: <@U1>" {
+		t.Errorf("requesterLine: got %q", got)
 	}
-	if got := g.mentionFor("1700000000.999999"); got != "" {
-		t.Errorf("mentionFor unknown thread: got %q", got)
+	if got := g.requesterLine("1700000000.999999"); got != "" {
+		t.Errorf("requesterLine unknown thread: got %q", got)
 	}
 
 	g.forgetKey("DEV-123")

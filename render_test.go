@@ -197,7 +197,7 @@ func TestBuildBlocksFreeTextHasAnswerButton(t *testing.T) {
 	blocks := buildBlocks(gatewaysdk.HumanInputRecord{
 		ToolCallID: "tc",
 		Question:   "What do you think?",
-	}, "")
+	})
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (section + Answer button), got %d", len(blocks))
 	}
@@ -217,20 +217,12 @@ func TestBuildBlocksFreeTextHasAnswerButton(t *testing.T) {
 	}
 }
 
-func TestBuildBlocksPrependsMention(t *testing.T) {
-	blocks := buildBlocks(gatewaysdk.HumanInputRecord{ToolCallID: "tc", Question: "Q?"}, "<@U1> ")
-	section := blocks[0].(*slack.SectionBlock)
-	if !strings.HasPrefix(section.Text.Text, "<@U1> ") {
-		t.Errorf("section text should start with the mention, got %q", section.Text.Text)
-	}
-}
-
 func TestBuildBlocksSingleSelectUsesButtons(t *testing.T) {
 	blocks := buildBlocks(gatewaysdk.HumanInputRecord{
 		ToolCallID: "tc-1",
 		Question:   "Pick one.",
 		Choices:    []string{"A", "B", "C"},
-	}, "")
+	})
 	// section + actions = 2 blocks
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (section + actions), got %d", len(blocks))
@@ -258,7 +250,7 @@ func TestBuildBlocksMultiSelectIsSectionAccessory(t *testing.T) {
 		Question:    "Pick any.",
 		Choices:     []string{"A", "B", "C"},
 		MultiSelect: true,
-	}, "")
+	})
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block (section with accessory), got %d", len(blocks))
 	}

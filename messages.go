@@ -35,7 +35,7 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		}
 	}
 
-	blocks := buildBlocks(rec, g.mentionFor(thread))
+	blocks := buildBlocks(rec)
 	opts := []slack.MsgOption{
 		slack.MsgOptionText(buildFallbackText(rec), false),
 		slack.MsgOptionBlocks(blocks...),
@@ -74,8 +74,12 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	} else {
 		// Request threads live in the default channel, so a per-mission
 		// channel override posts top-level there instead.
+		// A run with no request thread stays silent, so its failure can't
+		// add a second top-level message for the request.
 		thread = g.threadForMission(rec.MissionID)
-		body = g.mentionFor(thread) + body
+		if thread == "" {
+			return nil
+		}
 	}
 
 	blocks := []slack.Block{
@@ -91,14 +95,8 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	if thread != "" {
 		opts = append(opts, slack.MsgOptionTS(thread))
 	}
-	_, ts, err := client.PostMessageContext(ctx, channel, opts...)
-	if err != nil {
+	if _, _, err := client.PostMessageContext(ctx, channel, opts...); err != nil {
 		return fmt.Errorf("post notification: %w", err)
-	}
-	// A run whose first message is this notification makes it the request's
-	// one top-level message.
-	if thread == "" && rec.Channel == "" {
-		g.rememberRun(rec.MissionID, ts)
 	}
 	return nil
 }
@@ -165,17 +163,28 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	}
 
 	text := p.Text
-	if p.Channel == "" && !p.Root {
-		text = g.mentionFor(thread) + text
-	}
-	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	var blocks []slack.Block
 	if len(p.Blocks) > 0 {
 		var b slack.Blocks
 		if err := json.Unmarshal(p.Blocks, &b); err == nil {
-			opts = append(opts, slack.MsgOptionBlocks(b.BlockSet...))
+			blocks = b.BlockSet
 		} else {
 			log.Printf("slack blocks parse: %v", err)
 		}
+	}
+	// A mission rewriting the top-level message doesn't know who asked, so
+	// the requester line is put back each time or they'd stop following.
+	if p.Root {
+		if line := g.requesterLine(thread); line != "" {
+			text += "\n" + line
+			if blocks != nil {
+				blocks = append(blocks, slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, line, false, false)))
+			}
+		}
+	}
+	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	if blocks != nil {
+		opts = append(opts, slack.MsgOptionBlocks(blocks...))
 	}
 
 	switch {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -63,5 +64,21 @@ func TestStartInputsFromSubmissionDecodesTypedValues(t *testing.T) {
 	}
 	if _, set := inputs["optional"]; set {
 		t.Error("a blank optional field must be left for the mission's default")
+	}
+}
+
+func TestStartFieldErrorsPlacesErrorOnRejectedInput(t *testing.T) {
+	cb := slack.InteractionCallback{View: slack.View{
+		State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{
+			startInputPrefix + "string::issue": {"value": {Value: "DEV-1"}},
+			startInputPrefix + "list::states":  {"value": {Value: "CO"}},
+		}},
+	}}
+	errs := startFieldErrors(cb, errors.New("failed to start mission: input 'states': a list is required"))
+	if _, ok := errs[startInputPrefix+"list::states"]; !ok || len(errs) != 1 {
+		t.Errorf("the error must land on the states field only; got %v", errs)
+	}
+	if got := startFieldErrors(cb, errors.New("mission \"x\" is at max parallel capacity (1)")); got != nil {
+		t.Errorf("an error about no input must not land on a field; got %v", got)
 	}
 }
