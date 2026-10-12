@@ -1,8 +1,8 @@
 # squadron-gateway-slack
 
 A Squadron gateway that runs missions out of one Slack channel. Each
-request gets a single top-level message — the `@squadron start …`
-mention that started it, or one the gateway posts the first time a run
+request gets a single top-level message — the one the gateway posts
+when someone starts a mission with `/squadron`, or one it posts the first time a run
 needs to say something — and everything else about it goes in that
 message's thread: `builtins.human.ask` questions (answered with buttons, a
 multi-select dropdown, or an Answer modal), `builtins.gateway.post`
@@ -42,7 +42,7 @@ public URL.
    Token Scopes** → **Add an OAuth Scope** for each of:
 
    - `chat:write` — post the question messages
-   - `app_mentions:read` — hear `@squadron start …` requests
+   - `commands` — receive the `/squadron` command
    - `channels:read` — only needed if you'll use `channel_name` instead of `channel_id`
    - `groups:read` — same, for private channels
    - `files:write` — **only needed if agents will attach files** via the `builtins.gateway.post` tool's `attachments` (squadron reads the referenced memory/scratchpad file and the gateway uploads it). Skip it if you don't use attachments.
@@ -55,16 +55,11 @@ public URL.
    squadron vars set slack_bot_token <xoxb-…>
    ```
 
-### 4. Subscribe to mention events
+### 4. Create the `/squadron` command
 
-So the gateway can hear `@squadron start …` requests:
-
-1. Sidebar: **Event Subscriptions** → toggle **Enable Events** on.
-2. Under **Subscribe to bot events** → **Add Bot User Event** for
-   `app_mention`.
-
-3. Click **Save Changes**. If Slack asks you to reinstall the app
-   (because scopes changed), do it.
+1. Sidebar: **Slash Commands** → **Create New Command**.
+2. Command: `/squadron`. With Socket Mode on, no Request URL is needed.
+3. Click **Save**. If Slack asks you to reinstall the app, reinstall it.
 
 ### 5. Invite the bot to your channel
 
@@ -145,15 +140,17 @@ trip and breaks if the channel is renamed.
 
 ## Starting a mission
 
-Mention the bot at the top level of the channel, with the mission's
-inputs as a JSON object (optional when the mission needs none):
+Run `/squadron` in any channel the bot is in. A form opens: pick a
+mission, and it shows one field per input, using the names, types,
+descriptions and defaults from the mission's declaration (squadron's MCP
+`get_mission_config`). Required inputs must be filled in, and protected
+inputs aren't shown. Values for non-string inputs are entered as JSON,
+e.g. `["CO", "PA"]`.
 
-```
-@squadron start rate_triage {"issue": "DEV-123"}
-```
-
-The gateway replies in the mention's thread with the run id, and the
-mention becomes the request's top-level message.
+On **Start**, the gateway runs the mission and posts the request's
+top-level message in the configured channel, tagging you. Everything
+the run says afterwards goes in that message's thread. If the run can't
+start, only you see the error.
 
 ## Keeping a request in one thread
 

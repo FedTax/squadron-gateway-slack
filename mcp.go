@@ -102,3 +102,47 @@ func resultText(res *mcp.CallToolResult) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+type missionSummary struct {
+	Name      string `json:"name"`
+	Directive string `json:"directive"`
+}
+
+// listMissions calls list_missions for the mission picker.
+func (s *squadronMCP) listMissions(ctx context.Context) ([]missionSummary, error) {
+	text, err := s.callTool(ctx, "list_missions", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Missions []missionSummary `json:"missions"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return nil, fmt.Errorf("list_missions result: %w", err)
+	}
+	return out.Missions, nil
+}
+
+type missionInput struct {
+	Name        string          `json:"name"`
+	Type        string          `json:"type"`
+	Description string          `json:"description"`
+	Required    bool            `json:"required"`
+	Default     json.RawMessage `json:"default"`
+	Protected   bool            `json:"protected"`
+}
+
+// missionInputs calls get_mission_config for the inputs the start form asks for.
+func (s *squadronMCP) missionInputs(ctx context.Context, mission string) ([]missionInput, error) {
+	text, err := s.callTool(ctx, "get_mission_config", map[string]any{"name": mission})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Inputs []missionInput `json:"inputs"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return nil, fmt.Errorf("get_mission_config result: %w", err)
+	}
+	return out.Inputs, nil
+}

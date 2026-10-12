@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -171,37 +170,6 @@ func TestFakeAPIErrorPath(t *testing.T) {
 
 	if _, err := g.api.ResolveHumanInput(context.Background(), "tc", "x", "u"); err == nil {
 		t.Error("expected error from fake API")
-	}
-}
-
-func TestParseStartCommand(t *testing.T) {
-	mission, inputs, err := parseStartCommand("<@U0BOT> start rate_triage ```{\"issue\": \"DEV-123\", \"note\": \"a &amp; b\", \"repo_url\": \"<https://github.com/FedTax/x|github.com/FedTax/x>\", \"count\": 10000000}```")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mission != "rate_triage" {
-		t.Errorf("mission: got %q", mission)
-	}
-	if inputs["issue"] != "DEV-123" || inputs["note"] != "a & b" || inputs["repo_url"] != "https://github.com/FedTax/x" {
-		t.Errorf("inputs: got %+v", inputs)
-	}
-	if n, ok := inputs["count"].(json.Number); !ok || n.String() != "10000000" {
-		t.Errorf("numbers must stay as written, got %#v", inputs["count"])
-	}
-
-	if _, inputs, err := parseStartCommand("<@U0BOT> start\ngit_sync"); err != nil || len(inputs) != 0 {
-		t.Errorf("mission with no inputs: inputs=%v err=%v", inputs, err)
-	}
-
-	for _, text := range []string{
-		"<@U0BOT> hello",
-		"<@U0BOT> start",
-		"<@U0BOT> start m issue=DEV-1",
-		"<@U0BOT> start m {\"a\": 1} {\"b\": 2}",
-	} {
-		if _, _, err := parseStartCommand(text); err == nil {
-			t.Errorf("%q: expected an error", text)
-		}
 	}
 }
 

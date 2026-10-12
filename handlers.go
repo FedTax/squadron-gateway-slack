@@ -3,16 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"html"
 	"log"
-	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 )
 
@@ -38,16 +32,15 @@ func (g *slackGateway) runSocketEvents(ctx context.Context) {
 					g.socket.Ack(*evt.Request)
 				}
 				g.onInteraction(ctx, cb)
-			case socketmode.EventTypeEventsAPI:
-				eapi, ok := evt.Data.(slackevents.EventsAPIEvent)
+			case socketmode.EventTypeSlashCommand:
+				cmd, ok := evt.Data.(slack.SlashCommand)
 				if !ok {
-					log.Printf("events-api evt arrived but Data was %T", evt.Data)
 					continue
 				}
 				if evt.Request != nil {
 					g.socket.Ack(*evt.Request)
 				}
-				g.onEventsAPI(ctx, eapi)
+				g.onSlashCommand(ctx, cmd)
 			case socketmode.EventTypeConnecting, socketmode.EventTypeConnected, socketmode.EventTypeHello:
 				// status events — nothing to do
 			case socketmode.EventTypeErrorBadMessage, socketmode.EventTypeErrorWriteFailed,
@@ -64,6 +57,10 @@ func (g *slackGateway) runSocketEvents(ctx context.Context) {
 func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCallback) {
 	switch cb.Type {
 	case slack.InteractionTypeViewSubmission:
+		if cb.View.CallbackID == startCallbackID {
+			g.startFromSubmission(ctx, cb)
+			return
+		}
 		toolCallID, answer, ok := answerFromSubmission(cb)
 		if !ok {
 			return
@@ -78,6 +75,11 @@ func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCa
 		return
 	}
 	action := cb.ActionCallback.BlockActions[0]
+
+	if action.ActionID == startMissionAction {
+		g.onMissionPicked(ctx, cb, action.SelectedOption.Value)
+		return
+	}
 
 	if toolCallID, ok := decodeAnswerCustomID(action.ActionID); ok {
 		if _, err := g.client.OpenViewContext(ctx, cb.TriggerID, answerModal(toolCallID)); err != nil {
@@ -175,120 +177,6 @@ func answerFromSubmission(cb slack.InteractionCallback) (toolCallID, answer stri
 		return "", "", false
 	}
 	return cb.View.PrivateMetadata, answer, true
-}
-
-// onEventsAPI handles the one Events API event the gateway uses: an
-// @-mention that starts a mission.
-func (g *slackGateway) onEventsAPI(ctx context.Context, evt slackevents.EventsAPIEvent) {
-	if evt.Type != slackevents.CallbackEvent {
-		return
-	}
-	if ev, ok := evt.InnerEvent.Data.(*slackevents.AppMentionEvent); ok {
-		g.handleMention(ctx, ev)
-	}
-}
-
-const startUsage = "Usage: `@squadron start <mission> {\"input\": \"value\", ...}`"
-
-// handleMention starts the mission a top-level @-mention asks for. The
-// mention becomes the request's thread. Its thread key is mapped before
-// run_mission so the run's first question lands there even if it is asked
-// before run_mission returns.
-func (g *slackGateway) handleMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
-	if ev == nil || ev.User == "" || ev.User == g.botUserID || ev.Channel != g.channelID {
-		return
-	}
-	if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
-		return
-	}
-	mission, inputs, err := parseStartCommand(ev.Text)
-	if err != nil {
-		g.replyInThread(ctx, ev.TimeStamp, err.Error()+"\n"+startUsage)
-		return
-	}
-	if g.mcp == nil {
-		g.replyInThread(ctx, ev.TimeStamp, "Starting missions from Slack needs the gateway's `mcp_url` setting.")
-		return
-	}
-
-	// A new request for a key that already has a thread takes the key over:
-	// later runs for it belong to the request someone just asked for.
-	key, _ := g.renderSpec(mission, inputs)
-	previous := g.threadForKey(key)
-	g.rememberRequester(ev.TimeStamp, ev.User)
-	g.rememberKey(key, ev.TimeStamp)
-
-	missionID, err := g.mcp.startMission(ctx, mission, inputs)
-	if err != nil {
-		if previous != "" {
-			g.rememberKey(key, previous)
-		} else {
-			g.forgetKey(key)
-		}
-		g.replyInThread(ctx, ev.TimeStamp, fmt.Sprintf("Couldn't start `%s`: %v", mission, err))
-		return
-	}
-	g.rememberRun(missionID, ev.TimeStamp)
-	g.replyInThread(ctx, ev.TimeStamp, fmt.Sprintf("Started `%s` (run `%s`).", mission, missionID))
-}
-
-var slackLink = regexp.MustCompile(`<((?:https?|mailto):[^|>]+)(?:\|[^>]*)?>`)
-
-// parseStartCommand reads "<@bot> start <mission> [{JSON inputs}]". Slack
-// rewrites a URL typed in a message as <url|label> and escapes &, < and >,
-// so both are undone before decoding; backticks from code formatting around
-// the JSON are dropped. Numbers stay as written rather than becoming floats.
-func parseStartCommand(text string) (mission string, inputs map[string]any, err error) {
-	rest := strings.TrimSpace(text)
-	for strings.HasPrefix(rest, "<@") {
-		end := strings.Index(rest, ">")
-		if end < 0 {
-			break
-		}
-		rest = strings.TrimSpace(rest[end+1:])
-	}
-	verb, rest := cutWord(rest)
-	if verb != "start" {
-		return "", nil, errors.New("I only know how to start a mission.")
-	}
-	mission, rest = cutWord(rest)
-	if mission == "" {
-		return "", nil, errors.New("Which mission?")
-	}
-
-	raw := strings.TrimSpace(strings.Trim(strings.TrimSpace(rest), "`"))
-	raw = html.UnescapeString(slackLink.ReplaceAllString(raw, "$1"))
-	inputs = map[string]any{}
-	if raw == "" {
-		return mission, inputs, nil
-	}
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&inputs); err != nil {
-		return "", nil, fmt.Errorf("Inputs must be a JSON object: %v", err)
-	}
-	if dec.More() {
-		return "", nil, errors.New("Inputs must be a single JSON object.")
-	}
-	return mission, inputs, nil
-}
-
-func cutWord(s string) (word, rest string) {
-	s = strings.TrimSpace(s)
-	i := strings.IndexFunc(s, unicode.IsSpace)
-	if i < 0 {
-		return s, ""
-	}
-	return s[:i], s[i:]
-}
-
-func (g *slackGateway) replyInThread(ctx context.Context, ts, text string) {
-	if _, _, err := g.client.PostMessageContext(ctx, g.channelID,
-		slack.MsgOptionText(text, false),
-		slack.MsgOptionTS(ts),
-	); err != nil {
-		log.Printf("reply in thread %s: %v", ts, err)
-	}
 }
 
 // slackResponderID prefers the user's display name when present;
