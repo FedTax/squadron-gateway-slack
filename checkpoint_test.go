@@ -66,11 +66,15 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	g.checkpointPath = filepath.Join(dir, "cp.json")
 
 	g.rememberRequester("1700000000.000100", "U1")
-	g.rememberThread("mission-1", "1700000000.000100")
+	g.rememberRun("mission-1", "1700000000.000100")
+	g.rememberKey("DEV-123", "1700000000.000100")
 
 	cp := g.readCheckpoint()
 	if cp.MissionThreads["mission-1"] != "1700000000.000100" {
 		t.Errorf("mission thread not persisted: %+v", cp.MissionThreads)
+	}
+	if cp.KeyThreads["DEV-123"] != "1700000000.000100" {
+		t.Errorf("key thread not persisted: %+v", cp.KeyThreads)
 	}
 	if cp.Requesters["1700000000.000100"] != "U1" {
 		t.Errorf("requester not persisted: %+v", cp.Requesters)
@@ -80,5 +84,10 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	}
 	if got := g.mentionFor("1700000000.999999"); got != "" {
 		t.Errorf("mentionFor unknown thread: got %q", got)
+	}
+
+	g.forgetKey("DEV-123")
+	if got := g.threadForKey("DEV-123"); got != "" {
+		t.Errorf("forgotten key still maps to %q", got)
 	}
 }

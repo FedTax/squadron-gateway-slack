@@ -2,9 +2,9 @@
 
 A Squadron gateway that runs missions out of one Slack channel. Each
 request gets a single top-level message — the `@squadron start …`
-mention that started it, or one the gateway posts when a run first
-needs input — and everything else about it goes in that message's
-thread: `builtins.human.ask` questions (answered with buttons, a
+mention that started it, or one the gateway posts the first time a run
+needs to say something — and everything else about it goes in that
+message's thread: `builtins.human.ask` questions (answered with buttons, a
 multi-select dropdown, or an Answer modal), `builtins.gateway.post`
 posts, and lifecycle notifications. Whoever started the request is
 tagged on each of them.
@@ -136,6 +136,7 @@ The next `builtins.human.ask` call lands in your channel.
 | `checkpoint_path` | optional | Where the gateway persists the last event timestamp it processed and each mission's request thread. Defaults to `./.squadron-slack-gateway.json`. |
 | `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
 | `mcp_token`       | optional | The MCP host's `secret`, sent as a Bearer token. Use a `secret` variable. |
+| `threads`         | optional | JSON object of mission name → `{"key": …, "title": …}` templates; see [Keeping a request in one thread](#keeping-a-request-in-one-thread). |
 
 Set exactly one of `channel_id` or `channel_name`. `channel_id` is the
 most stable handle — renaming a channel won't break the gateway.
@@ -144,39 +145,51 @@ trip and breaks if the channel is renamed.
 
 ## Starting a mission
 
-Mention the bot at the top level of the channel:
+Mention the bot at the top level of the channel, with the mission's
+inputs as a JSON object (optional when the mission needs none):
 
 ```
-@squadron start rate_triage issue=DEV-123
+@squadron start rate_triage {"issue": "DEV-123"}
 ```
 
-Each `input=value` becomes a mission input (values can't contain
-spaces). The gateway also passes the mention's timestamp as the
-`slack_thread` input and replies in its thread with the run id.
+The gateway replies in the mention's thread with the run id, and the
+mention becomes the request's top-level message.
 
 ## Keeping a request in one thread
 
-Questions and notifications reach the gateway with their mission id. A
-run the gateway started is already mapped to its thread. Any other run
-is looked up through MCP: if it has a `slack_thread` input, it joins that
-thread. Squadron records no link between a mission and the one it
-routes to, so to keep a chained mission in the same thread, declare the
-input on every mission in the chain and pass it along in the route:
+Each request gets one top-level message and everything else goes in its
+thread. Questions and notifications reach the gateway with their mission
+id. A run the gateway started is already mapped to its thread. Any other
+run (chained, resumed, or started elsewhere) is placed by its **thread
+key**. Squadron records no link between a mission and the one it routes
+to, so the key is how a later run finds the request it belongs to.
+
+Keys and titles are set per mission in the `threads` setting, as
+[text/template](https://pkg.go.dev/text/template) strings over the
+run's inputs:
 
 ```hcl
-input "slack_thread" {
-  type        = "string"
-  description = "Slack request thread; pass it unchanged to any mission this one routes to."
-  default     = ""
-}
+threads = <<-EOT
+  {
+    "rate_triage":   {"key": "{{.issue}}", "title": "{{.issue}}: rate ticket"},
+    "rate_fix":      {"key": "{{.issue}}", "title": "{{.issue}}: rate ticket"},
+    "rate_finalize": {"key": "{{.issue}}", "title": "{{.issue}}: rate ticket"}
+  }
+EOT
 ```
 
-For `builtins.gateway.post`, set `thread` to the mission's
-`slack_thread` input to reply in the thread.
-
-A run with no thread gets one the first time it asks a question: the
-gateway posts a top-level "<mission> needs input" message and threads
-the question under it.
+- Runs whose keys render the same share a thread, so prefix a key when
+  unrelated missions could render the same value.
+- `title` is the top-level message when the gateway has to start the
+  thread itself (the run's first question arrived before any thread
+  existed). Without one, the gateway posts `<mission>: <question summary>`.
+- A key that references an input the run doesn't have isn't used, and
+  the run gets a thread of its own.
+- For `builtins.gateway.post`, set `thread` to the request's key (e.g.
+  the ticket key). The post replies in that thread, or becomes the
+  request's top-level message when it has none yet.
+- Starting a request for a key that already has a thread moves the key
+  to the new thread.
 
 ## What the operator sees
 

@@ -59,13 +59,18 @@ func buildAnswerButtonBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
 	return slack.NewActionBlock("sq-answer-"+rec.ToolCallID, btn)
 }
 
-// threadTitle is the top-level message for a run that asks a question
-// before anything else gave it a thread.
-func threadTitle(rec gatewaysdk.HumanInputRecord) string {
-	if rec.MissionName != "" {
-		return "*" + rec.MissionName + "* needs input"
+// fallbackThreadTitle is the top-level message for a run whose mission has
+// no title in the `threads` setting: the mission and what it is asking, so
+// the thread can still be found by searching the channel.
+func fallbackThreadTitle(rec gatewaysdk.HumanInputRecord, missionName string) string {
+	name := rec.MissionName
+	if name == "" {
+		name = missionName
 	}
-	return "Mission run `" + rec.MissionID + "` needs input"
+	if name == "" {
+		name = "Mission run " + rec.MissionID
+	}
+	return "*" + name + "*: " + buildFallbackText(rec)
 }
 
 // buildMessageBody renders the question + context as Slack mrkdwn.

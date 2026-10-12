@@ -27,10 +27,11 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		return fmt.Errorf("slack client not initialized")
 	}
 
-	thread, ok := g.threadForMission(ctx, rec.MissionID)
-	if !ok && rec.MissionID != "" {
+	rt := g.threadForMission(ctx, rec.MissionID)
+	thread := rt.ts
+	if thread == "" && rec.MissionID != "" {
 		var err error
-		if thread, err = g.startThread(ctx, rec.MissionID, threadTitle(rec)); err != nil {
+		if thread, err = g.startThread(ctx, rec.MissionID, rt, fallbackThreadTitle(rec, rt.missionName)); err != nil {
 			return err
 		}
 	}
@@ -69,12 +70,14 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	}
 	body := buildNotificationBody(rec)
 	var thread string
+	var rt runThread
 	if rec.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, rec.Channel, channel)
-	} else if ts, ok := g.threadForMission(ctx, rec.MissionID); ok {
+	} else {
 		// Request threads live in the default channel, so a per-mission
 		// channel override posts top-level there instead.
-		thread = ts
+		rt = g.threadForMission(ctx, rec.MissionID)
+		thread = rt.ts
 		body = g.mentionFor(thread) + body
 	}
 
@@ -91,8 +94,15 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	if thread != "" {
 		opts = append(opts, slack.MsgOptionTS(thread))
 	}
-	if _, _, err := client.PostMessageContext(ctx, channel, opts...); err != nil {
+	_, ts, err := client.PostMessageContext(ctx, channel, opts...)
+	if err != nil {
 		return fmt.Errorf("post notification: %w", err)
+	}
+	// A run whose first message is this notification makes it the request's
+	// one top-level message.
+	if thread == "" && rec.Channel == "" {
+		g.rememberRun(rec.MissionID, ts)
+		g.rememberKey(rt.key, ts)
 	}
 	return nil
 }
@@ -102,7 +112,7 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 const slackPostDescription = "Post a message to the Slack channel. " +
 	"`text` is the message body and supports Slack mrkdwn (*bold*, _italics_, `code`, > quotes, <url|label> links). " +
 	"`channel` optionally overrides the destination — a channel name (with or without a leading #) or id. " +
-	"`thread` replies inside a request's thread instead of posting a new top-level message: pass the mission's `slack_thread` input when it has one. " +
+	"`thread` is the request's thread key (the mission's key from the gateway's `threads` setting, e.g. its ticket key): the post replies in that request's thread, or becomes its top-level message when there is none yet. " +
 	"`blocks` is an optional Slack Block Kit array for rich layout; each element is a block object with a `type`. Common types: " +
 	"`header` = {\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"...\"}}; " +
 	"`section` = {\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"...\"}} (or use \"fields\":[{\"type\":\"mrkdwn\",\"text\":\"...\"}] for a two-column grid); " +
@@ -117,7 +127,7 @@ const slackPostSchema = `{
   "properties": {
     "text": {"type": "string", "description": "Message body (Slack mrkdwn supported). When blocks are set, this is the notification/preview fallback."},
     "channel": {"type": "string", "description": "Optional channel name or id override."},
-    "thread": {"type": "string", "description": "Optional request thread to reply in: the mission's slack_thread input. Ignored when channel is set."},
+    "thread": {"type": "string", "description": "Optional request thread key, as configured for the mission in the gateway's threads setting. Ignored when channel is set."},
     "blocks": {
       "type": "array",
       "description": "Optional Slack Block Kit blocks for rich layout. Each item is a block object with a 'type'. Common types: header, section (text or fields), divider, context, image, actions (buttons). Example: [{\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"Deploy\"}},{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"*v2* shipped to prod\"}},{\"type\":\"divider\"},{\"type\":\"context\",\"elements\":[{\"type\":\"mrkdwn\",\"text\":\"3m 12s\"}]}]",
@@ -153,8 +163,8 @@ func (g *slackGateway) postMessage(ctx context.Context, payload string, attachme
 	var thread string
 	if p.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
-	} else if p.Thread != "" {
-		thread = p.Thread
+	} else {
+		thread = g.threadForKey(p.Thread)
 		text = g.mentionFor(thread) + text
 	}
 
@@ -170,8 +180,14 @@ func (g *slackGateway) postMessage(ctx context.Context, payload string, attachme
 			log.Printf("slack blocks parse: %v", err)
 		}
 	}
-	if _, _, err := client.PostMessageContext(ctx, channel, opts...); err != nil {
+	_, ts, err := client.PostMessageContext(ctx, channel, opts...)
+	if err != nil {
 		return fmt.Errorf("post message: %w", err)
+	}
+	// A request whose first message is this post makes it the request's one
+	// top-level message.
+	if thread == "" && p.Channel == "" {
+		g.rememberKey(p.Thread, ts)
 	}
 
 	for _, a := range attachments {

@@ -10,7 +10,8 @@ import (
 // Checkpoint = what a restart needs to pick up where it left off: the
 // latest event timestamp processed, so catch-up replays only what it
 // missed, plus the request threads, so a restarted gateway keeps posting
-// each mission into the thread it started in and tagging its requester.
+// each run and thread key into the thread it started in and tagging its
+// requester.
 // Lost or corrupt files fall back to empty (replay everything in
 // squadron's recent window; missions are looked up again through MCP).
 
@@ -18,6 +19,8 @@ type checkpoint struct {
 	Latest time.Time `json:"latest"`
 	// MissionThreads maps mission id → request thread ts.
 	MissionThreads map[string]string `json:"mission_threads,omitempty"`
+	// KeyThreads maps rendered thread key → request thread ts.
+	KeyThreads map[string]string `json:"key_threads,omitempty"`
 	// Requesters maps request thread ts → Slack user id of who started it.
 	Requesters map[string]string `json:"requesters,omitempty"`
 }
@@ -58,6 +61,7 @@ func (g *slackGateway) saveCheckpoint() {
 	data, err := json.Marshal(checkpoint{
 		Latest:         g.latest,
 		MissionThreads: g.missionThreads,
+		KeyThreads:     g.keyThreads,
 		Requesters:     g.requesters,
 	})
 	if err != nil {

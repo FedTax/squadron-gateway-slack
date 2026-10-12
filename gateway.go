@@ -27,10 +27,15 @@ type slackGateway struct {
 	// resolved it).
 	messages map[string]string
 
-	// mission id → request thread ts, and request thread ts → requester.
-	// Persisted in the checkpoint; see threads.go.
+	// mission id → request thread ts, thread key → request thread ts, and
+	// request thread ts → requester. Persisted in the checkpoint; see
+	// threads.go.
 	missionThreads map[string]string
+	keyThreads     map[string]string
 	requesters     map[string]string
+
+	// mission name → thread key/title templates, from the `threads` setting.
+	threadSpecs map[string]threadSpec
 
 	// nil when mcp_url isn't set: missions can't be started from Slack and
 	// runs the gateway didn't start can't be traced to their thread.
@@ -48,6 +53,8 @@ func newSlackGateway() *slackGateway {
 	return &slackGateway{
 		messages:       map[string]string{},
 		missionThreads: map[string]string{},
+		keyThreads:     map[string]string{},
+		threadSpecs:    map[string]threadSpec{},
 		requesters:     map[string]string{},
 	}
 }
@@ -84,11 +91,19 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 	if mcpURL := strings.TrimSpace(settings["mcp_url"]); mcpURL != "" {
 		g.mcp = &squadronMCP{url: mcpURL, token: strings.TrimSpace(settings["mcp_token"])}
 	}
+	specs, err := parseThreadSpecs(strings.TrimSpace(settings["threads"]))
+	if err != nil {
+		return err
+	}
+	g.threadSpecs = specs
 	cp := g.readCheckpoint()
 	g.mu.Lock()
 	g.latest = cp.Latest
 	for id, ts := range cp.MissionThreads {
 		g.missionThreads[id] = ts
+	}
+	for key, ts := range cp.KeyThreads {
+		g.keyThreads[key] = ts
 	}
 	for ts, user := range cp.Requesters {
 		g.requesters[ts] = user

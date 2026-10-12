@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -186,11 +188,12 @@ func (g *slackGateway) onEventsAPI(ctx context.Context, evt slackevents.EventsAP
 	}
 }
 
-const startUsage = "Usage: `@squadron start <mission> [input=value ...]`"
+const startUsage = "Usage: `@squadron start <mission> {\"input\": \"value\", ...}`"
 
 // handleMention starts the mission a top-level @-mention asks for. The
-// mention becomes the request's thread: its timestamp goes in as the
-// slack_thread input, and everything the run posts replies under it.
+// mention becomes the request's thread. Its thread key is mapped before
+// run_mission so the run's first question lands there even if it is asked
+// before run_mission returns.
 func (g *slackGateway) handleMention(ctx context.Context, ev *slackevents.AppMentionEvent) {
 	if ev == nil || ev.User == "" || ev.User == g.botUserID || ev.Channel != g.channelID {
 		return
@@ -207,40 +210,76 @@ func (g *slackGateway) handleMention(ctx context.Context, ev *slackevents.AppMen
 		g.replyInThread(ctx, ev.TimeStamp, "Starting missions from Slack needs the gateway's `mcp_url` setting.")
 		return
 	}
-	inputs[slackThreadInput] = ev.TimeStamp
+
+	// A new request for a key that already has a thread takes the key over:
+	// later runs for it belong to the request someone just asked for.
+	key, _ := g.renderSpec(mission, inputs)
+	previous := g.threadForKey(key)
 	g.rememberRequester(ev.TimeStamp, ev.User)
+	g.rememberKey(key, ev.TimeStamp)
+
 	missionID, err := g.mcp.startMission(ctx, mission, inputs)
 	if err != nil {
+		if previous != "" {
+			g.rememberKey(key, previous)
+		} else {
+			g.forgetKey(key)
+		}
 		g.replyInThread(ctx, ev.TimeStamp, fmt.Sprintf("Couldn't start `%s`: %v", mission, err))
 		return
 	}
-	g.rememberThread(missionID, ev.TimeStamp)
+	g.rememberRun(missionID, ev.TimeStamp)
 	g.replyInThread(ctx, ev.TimeStamp, fmt.Sprintf("Started `%s` (run `%s`).", mission, missionID))
 }
 
-// parseStartCommand reads "<@bot> start <mission> [key=value ...]". Values
-// can't contain spaces. Slack escapes &, < and > in message text, so values
-// are unescaped before they reach the mission.
-func parseStartCommand(text string) (mission string, inputs map[string]string, err error) {
-	fields := strings.Fields(text)
-	for len(fields) > 0 && strings.HasPrefix(fields[0], "<@") {
-		fields = fields[1:]
+var slackLink = regexp.MustCompile(`<((?:https?|mailto):[^|>]+)(?:\|[^>]*)?>`)
+
+// parseStartCommand reads "<@bot> start <mission> [{JSON inputs}]". Slack
+// rewrites a URL typed in a message as <url|label> and escapes &, < and >,
+// so both are undone before decoding; backticks from code formatting around
+// the JSON are dropped. Numbers stay as written rather than becoming floats.
+func parseStartCommand(text string) (mission string, inputs map[string]any, err error) {
+	rest := strings.TrimSpace(text)
+	for strings.HasPrefix(rest, "<@") {
+		end := strings.Index(rest, ">")
+		if end < 0 {
+			break
+		}
+		rest = strings.TrimSpace(rest[end+1:])
 	}
-	if len(fields) < 2 || fields[0] != "start" {
+	verb, rest := cutWord(rest)
+	if verb != "start" {
 		return "", nil, errors.New("I only know how to start a mission.")
 	}
-	inputs = map[string]string{}
-	for _, f := range fields[2:] {
-		k, v, ok := strings.Cut(f, "=")
-		if !ok || k == "" {
-			return "", nil, fmt.Errorf("Can't read `%s` as input=value.", f)
-		}
-		if k == slackThreadInput {
-			return "", nil, fmt.Errorf("`%s` is set by the gateway.", slackThreadInput)
-		}
-		inputs[k] = html.UnescapeString(v)
+	mission, rest = cutWord(rest)
+	if mission == "" {
+		return "", nil, errors.New("Which mission?")
 	}
-	return fields[1], inputs, nil
+
+	raw := strings.TrimSpace(strings.Trim(strings.TrimSpace(rest), "`"))
+	raw = html.UnescapeString(slackLink.ReplaceAllString(raw, "$1"))
+	inputs = map[string]any{}
+	if raw == "" {
+		return mission, inputs, nil
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&inputs); err != nil {
+		return "", nil, fmt.Errorf("Inputs must be a JSON object: %v", err)
+	}
+	if dec.More() {
+		return "", nil, errors.New("Inputs must be a single JSON object.")
+	}
+	return mission, inputs, nil
+}
+
+func cutWord(s string) (word, rest string) {
+	s = strings.TrimSpace(s)
+	i := strings.IndexFunc(s, unicode.IsSpace)
+	if i < 0 {
+		return s, ""
+	}
+	return s[:i], s[i:]
 }
 
 func (g *slackGateway) replyInThread(ctx context.Context, ts, text string) {
