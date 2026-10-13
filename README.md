@@ -250,7 +250,6 @@ The output records outgoing API payloads for externally started and slash-comman
 started cases, including root edits, threaded replies, questions, failures, and
 checkpoint reload. No Slack app or model is contacted. The JSON `checks` report
 whether the cases kept one thread. A passing walkthrough means the capture
-completed; false checks remain visible as behavior to investigate. The mission
-API, agent decisions, and incoming answers are scripted, so this does not validate
-Socket Mode delivery or actual rate-workflow execution. Keep the generated JSON
-outside version control.
+completed; false checks remain visible as behavior to investigate. The recorder supplies mission events and answers directly to the gateway. Use a
+running Squadron instance and a Slack test app to exercise mission execution and
+Socket Mode delivery. Keep the generated JSON outside version control.
