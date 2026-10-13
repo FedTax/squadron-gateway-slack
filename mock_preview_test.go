@@ -121,7 +121,7 @@ func TestMockSlackPreview(t *testing.T) {
 			step = "Choose mission"
 			g.onMissionPicked(ctx, slack.InteractionCallback{View: slack.View{ID: "VTEST"}}, "rate_triage")
 			step = "Submit mission"
-			g.onStartSubmitted(ctx, nil, slack.InteractionCallback{User: slack.User{ID: "UTEST"}, View: slack.View{CallbackID: startCallbackID, PrivateMetadata: "rate_triage", State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{startInputPrefix + "string::issue": {"value": {Value: "TEST-001"}}}}}})
+			g.onStartSubmitted(ctx, nil, slack.InteractionCallback{User: slack.User{ID: "UTEST"}, View: slack.View{CallbackID: startCallbackID, PrivateMetadata: `{"mission":"rate_triage"}`, State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{startInputPrefix + "string::issue": {"value": {Value: "TEST-001"}}}}}})
 		}
 		post := func(run, text string, root bool) {
 			body, _ := json.Marshal(map[string]any{"text": text, "thread": "TEST-001", "root": root})

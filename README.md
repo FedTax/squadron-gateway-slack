@@ -61,6 +61,10 @@ public URL.
 1. Sidebar: **Slash Commands** → **Create New Command**.
 2. Command: `/squadron`. With Socket Mode on, no Request URL is needed.
 3. Click **Save**. If Slack asks you to reinstall the app, reinstall it.
+4. To run `/squadron` in a DM with the app: sidebar **App Home** →
+   **Messages Tab** → turn it on and tick **Allow users to send Slash
+   commands and messages from the messages tab** (manifest:
+   `messages_tab_enabled: true`, `messages_tab_read_only_enabled: false`).
 
 ### 5. Invite the bot to your channel
 
@@ -153,6 +157,10 @@ top-level message in the configured channel, naming you as the
 requester. Everything the run says afterwards goes in that message's
 thread. If squadron rejects an input, the error shows on that field and
 the form stays open; any other start error is sent to you alone.
+
+Run `/squadron` in a DM instead to keep the request private: its
+top-level message, questions, updates and notifications all go to your
+DM with the app rather than the configured channel.
 
 ## Keeping a request in one thread
 

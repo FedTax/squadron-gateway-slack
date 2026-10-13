@@ -85,13 +85,27 @@ func (g *slackGateway) threadForKey(key string) string {
 	return g.keyThreads[key]
 }
 
-// rememberRequester is recorded before the mission starts, so a question the
-// run asks before run_mission even returns still tags the requester.
-func (g *slackGateway) rememberRequester(ts, userID string) {
+// rememberRequest records who started a request and, when it lives outside
+// the configured channel, where, so its posts after a restart still reach it.
+func (g *slackGateway) rememberRequest(ts, channel, userID string) {
 	g.mu.Lock()
 	g.requesters[ts] = userID
+	if channel != g.channelID {
+		g.threadChannels[ts] = channel
+	}
 	g.writeCheckpointLocked()
 	g.mu.Unlock()
+}
+
+// requestChannel is where a request thread lives: the requester's DM with
+// the app when /squadron was run in a DM, otherwise the configured channel.
+func (g *slackGateway) requestChannel(ts string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if channel := g.threadChannels[ts]; channel != "" {
+		return channel
+	}
+	return g.channelID
 }
 
 // requesterLine names whoever started the request on its top-level

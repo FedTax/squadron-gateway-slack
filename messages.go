@@ -12,6 +12,22 @@ import (
 	"github.com/slack-go/slack"
 )
 
+type postedMessage struct {
+	channel, ts string
+}
+
+// questionChannel is where a question was posted, so a note about its answer
+// reaches the same place; questions from before a restart fall back to the
+// configured channel.
+func (g *slackGateway) questionChannel(toolCallID string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if posted, ok := g.messages[toolCallID]; ok {
+		return posted.channel
+	}
+	return g.channelID
+}
+
 // postQuestion posts a fresh request to Slack. Idempotent on
 // tool_call_id so catch-up replays don't double-post.
 func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInputRecord) error {
@@ -35,6 +51,10 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		}
 	}
 
+	if thread != "" {
+		channel = g.requestChannel(thread)
+	}
+
 	blocks := buildBlocks(rec)
 	opts := []slack.MsgOption{
 		slack.MsgOptionText(buildFallbackText(rec), false),
@@ -49,7 +69,7 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 	}
 
 	g.mu.Lock()
-	g.messages[rec.ToolCallID] = ts
+	g.messages[rec.ToolCallID] = postedMessage{channel: channel, ts: ts}
 	g.mu.Unlock()
 
 	g.advanceCheckpoint(rec.RequestedAt)
@@ -72,14 +92,14 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	if rec.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, rec.Channel, channel)
 	} else {
-		// Request threads live in the default channel, so a per-mission
-		// channel override posts top-level there instead.
+		// A per-mission channel override posts top-level there instead.
 		// A run with no request thread stays silent, so its failure can't
 		// add a second top-level message for the request.
 		thread = g.threadForMission(rec.MissionID)
 		if thread == "" {
 			return nil
 		}
+		channel = g.requestChannel(thread)
 	}
 
 	blocks := []slack.Block{
@@ -160,6 +180,9 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
 	} else {
 		thread = g.threadForPost(req.MissionID, p.Thread)
+		if thread != "" {
+			channel = g.requestChannel(thread)
+		}
 	}
 
 	text := p.Text
@@ -278,9 +301,8 @@ func looksLikeSlackID(s string) bool {
 // No-op if we never posted this question.
 func (g *slackGateway) markResolved(ctx context.Context, rec gatewaysdk.HumanInputRecord) error {
 	g.mu.Lock()
-	ts, ok := g.messages[rec.ToolCallID]
+	posted, ok := g.messages[rec.ToolCallID]
 	client := g.client
-	channel := g.channelID
 	g.mu.Unlock()
 	if !ok || client == nil {
 		return nil
@@ -293,7 +315,7 @@ func (g *slackGateway) markResolved(ctx context.Context, rec gatewaysdk.HumanInp
 			nil, nil,
 		),
 	}
-	if _, _, _, err := client.UpdateMessageContext(ctx, channel, ts,
+	if _, _, _, err := client.UpdateMessageContext(ctx, posted.channel, posted.ts,
 		slack.MsgOptionText(body, false),
 		slack.MsgOptionBlocks(resolvedBlocks...),
 	); err != nil {

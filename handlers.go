@@ -65,7 +65,7 @@ func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCa
 		if !ok {
 			return
 		}
-		g.resolve(ctx, toolCallID, answer, slackResponderID(cb), g.channelID, cb.User.ID)
+		g.resolve(ctx, toolCallID, answer, slackResponderID(cb), g.questionChannel(toolCallID), cb.User.ID)
 		return
 	case slack.InteractionTypeBlockActions:
 	default:

@@ -22,17 +22,17 @@ type slackGateway struct {
 	channelID string
 	botUserID string
 
-	// tool_call_id → posted message ts, so we can edit the
-	// message when the request resolves (regardless of which surface
-	// resolved it).
-	messages map[string]string
+	// tool_call_id → posted message, so we can edit the message when the
+	// request resolves (regardless of which surface resolved it).
+	messages map[string]postedMessage
 
-	// mission id → request thread ts, thread key → request thread ts, and
-	// request thread ts → requester. Persisted in the checkpoint; see
-	// threads.go.
+	// mission id → request thread ts, thread key → request thread ts,
+	// request thread ts → requester, and request thread ts → channel for
+	// requests started in a DM. Persisted in the checkpoint; see threads.go.
 	missionThreads map[string]string
 	keyThreads     map[string]string
 	requesters     map[string]string
+	threadChannels map[string]string
 
 	// nil when mcp_url isn't set: missions can't be started from Slack and
 	// runs the gateway didn't start can't be traced to their thread.
@@ -48,10 +48,11 @@ type slackGateway struct {
 
 func newSlackGateway() *slackGateway {
 	return &slackGateway{
-		messages:       map[string]string{},
+		messages:       map[string]postedMessage{},
 		missionThreads: map[string]string{},
 		keyThreads:     map[string]string{},
 		requesters:     map[string]string{},
+		threadChannels: map[string]string{},
 	}
 }
 

@@ -23,6 +23,21 @@ const (
 	startInputPrefix    = "sq-in::"
 )
 
+// startForm travels in the form's private_metadata, because a submission
+// doesn't say where /squadron was run.
+type startForm struct {
+	Mission string `json:"mission,omitempty"`
+	// DM keeps the request in the requester's DM with the app, for work
+	// the rest of the channel doesn't need to see.
+	DM bool `json:"dm,omitempty"`
+}
+
+func readStartForm(metadata string) startForm {
+	var form startForm
+	_ = json.Unmarshal([]byte(metadata), &form)
+	return form
+}
+
 func (g *slackGateway) onSlashCommand(ctx context.Context, cmd slack.SlashCommand) {
 	if g.mcp == nil {
 		g.ephemeral(ctx, cmd.ChannelID, cmd.UserID, "Starting missions from Slack needs the gateway's `mcp_url` setting.")
@@ -33,13 +48,15 @@ func (g *slackGateway) onSlashCommand(ctx context.Context, cmd slack.SlashComman
 		g.ephemeral(ctx, cmd.ChannelID, cmd.UserID, fmt.Sprintf("Couldn't list missions: %v", err))
 		return
 	}
-	if _, err := g.client.OpenViewContext(ctx, cmd.TriggerID, startModal(missions, "", nil)); err != nil {
+	if _, err := g.client.OpenViewContext(ctx, cmd.TriggerID, startModal(missions, startForm{DM: strings.HasPrefix(cmd.ChannelID, "D")}, nil)); err != nil {
 		log.Printf("open start modal: %v", err)
 	}
 }
 
 // onMissionPicked redraws the form with the picked mission's inputs.
 func (g *slackGateway) onMissionPicked(ctx context.Context, cb slack.InteractionCallback, mission string) {
+	form := readStartForm(cb.View.PrivateMetadata)
+	form.Mission = mission
 	missions, err := g.mcp.listMissions(ctx)
 	if err != nil {
 		log.Printf("list missions: %v", err)
@@ -50,12 +67,13 @@ func (g *slackGateway) onMissionPicked(ctx context.Context, cb slack.Interaction
 		log.Printf("mission inputs for %s: %v", mission, err)
 		return
 	}
-	if _, err := g.client.UpdateViewContext(ctx, startModal(missions, mission, inputs), "", cb.View.Hash, cb.View.ID); err != nil {
+	if _, err := g.client.UpdateViewContext(ctx, startModal(missions, form, inputs), "", cb.View.Hash, cb.View.ID); err != nil {
 		log.Printf("update start modal: %v", err)
 	}
 }
 
-func startModal(missions []missionSummary, picked string, inputs []missionInput) slack.ModalViewRequest {
+func startModal(missions []missionSummary, form startForm, inputs []missionInput) slack.ModalViewRequest {
+	picked := form.Mission
 	options := make([]*slack.OptionBlockObject, 0, len(missions))
 	var initial *slack.OptionBlockObject
 	for _, m := range missions {
@@ -93,10 +111,11 @@ func startModal(missions []missionSummary, picked string, inputs []missionInput)
 		blocks = append(blocks, block)
 	}
 
+	metadata, _ := json.Marshal(form)
 	m := slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      startCallbackID,
-		PrivateMetadata: picked,
+		PrivateMetadata: string(metadata),
 		Title:           slack.NewTextBlockObject(slack.PlainTextType, "Start a mission", false, false),
 		Close:           slack.NewTextBlockObject(slack.PlainTextType, "Cancel", false, false),
 		Blocks:          slack.Blocks{BlockSet: blocks},
@@ -120,10 +139,10 @@ func defaultText(in missionInput) string {
 // startInputsFromSubmission turns the form back into mission inputs. A
 // non-string input is decoded as JSON so lists and objects arrive typed;
 // one that isn't valid JSON is passed as text for squadron to reject.
-func startInputsFromSubmission(cb slack.InteractionCallback) (mission string, inputs map[string]any, ok bool) {
-	mission = cb.View.PrivateMetadata
-	if cb.View.CallbackID != startCallbackID || mission == "" || cb.View.State == nil {
-		return "", nil, false
+func startInputsFromSubmission(cb slack.InteractionCallback) (form startForm, inputs map[string]any, ok bool) {
+	form = readStartForm(cb.View.PrivateMetadata)
+	if cb.View.CallbackID != startCallbackID || form.Mission == "" || cb.View.State == nil {
+		return startForm{}, nil, false
 	}
 	inputs = map[string]any{}
 	for blockID, actions := range cb.View.State.Values {
@@ -147,7 +166,7 @@ func startInputsFromSubmission(cb slack.InteractionCallback) (mission string, in
 		}
 		inputs[name] = v
 	}
-	return mission, inputs, true
+	return form, inputs, true
 }
 
 // onStartSubmitted starts the run a submitted start form describes. Slack
@@ -155,30 +174,47 @@ func startInputsFromSubmission(cb slack.InteractionCallback) (mission string, in
 // run_mission; a bad value then shows on its field and the form stays open
 // for the user to correct instead of being filled in again.
 func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Request, cb slack.InteractionCallback) {
-	mission, inputs, ok := startInputsFromSubmission(cb)
+	form, inputs, ok := startInputsFromSubmission(cb)
 	if !ok {
 		g.ack(req)
 		return
 	}
-	missionID, err := g.mcp.startMission(ctx, mission, inputs)
+	missionID, err := g.mcp.startMission(ctx, form.Mission, inputs)
 	if err != nil {
 		if errs := startFieldErrors(cb, err); errs != nil {
 			g.ack(req, slack.NewErrorsViewSubmissionResponse(errs))
 			return
 		}
 		g.ack(req)
-		g.ephemeral(ctx, g.channelID, cb.User.ID, fmt.Sprintf("Couldn't start `%s`: %v", mission, err))
+		text := fmt.Sprintf("Couldn't start `%s`: %v", form.Mission, err)
+		if form.DM {
+			g.postToDM(ctx, cb.User.ID, text)
+		} else {
+			g.ephemeral(ctx, g.channelID, cb.User.ID, text)
+		}
 		return
 	}
 	g.ack(req)
-	_, ts, err := g.client.PostMessageContext(ctx, g.channelID,
-		slack.MsgOptionText(fmt.Sprintf("*%s* (run `%s`)\n%s", mission, missionID, requesterText(cb.User.ID)), false))
+	// Slack delivers a post addressed to a user ID to that user's DM with
+	// the app; the DM's own channel ID comes back for the thread's later posts.
+	target := g.channelID
+	if form.DM {
+		target = cb.User.ID
+	}
+	channel, ts, err := g.client.PostMessageContext(ctx, target,
+		slack.MsgOptionText(fmt.Sprintf("*%s* (run `%s`)\n%s", form.Mission, missionID, requesterText(cb.User.ID)), false))
 	if err != nil {
 		log.Printf("post request message for %s: %v", missionID, err)
 		return
 	}
-	g.rememberRequester(ts, cb.User.ID)
+	g.rememberRequest(ts, channel, cb.User.ID)
 	g.rememberRun(missionID, ts)
+}
+
+func (g *slackGateway) postToDM(ctx context.Context, user, text string) {
+	if _, _, err := g.client.PostMessageContext(ctx, user, slack.MsgOptionText(text, false)); err != nil {
+		log.Printf("dm to %s: %v", user, err)
+	}
 }
 
 // squadron names the input it rejects as `input 'name'` or

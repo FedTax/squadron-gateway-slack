@@ -65,7 +65,7 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	g := newSlackGateway()
 	g.checkpointPath = filepath.Join(dir, "cp.json")
 
-	g.rememberRequester("1700000000.000100", "U1")
+	g.rememberRequest("1700000000.000100", g.channelID, "U1")
 	g.rememberRun("mission-1", "1700000000.000100")
 	g.rememberKey("DEV-123", "1700000000.000100")
 
