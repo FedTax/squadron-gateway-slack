@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/slack-go/slack"
 )
@@ -99,11 +100,13 @@ func (g *slackGateway) threadForKey(key string) string {
 	return g.keyThreads[key]
 }
 
-// rememberRequest records who started a request and, when it lives outside
-// the configured channel, where, so its posts after a restart still reach it.
-func (g *slackGateway) rememberRequest(ts, channel, userID string) {
+// rememberRequest records who started a request, the run it started and,
+// when it lives outside the configured channel, where, so its posts after a
+// restart still reach it.
+func (g *slackGateway) rememberRequest(ts, channel, userID, missionLine string) {
 	g.mu.Lock()
 	g.requesters[ts] = userID
+	g.missionLines[ts] = missionLine
 	if channel != g.channelID {
 		g.threadChannels[ts] = channel
 	}
@@ -111,8 +114,9 @@ func (g *slackGateway) rememberRequest(ts, channel, userID string) {
 	g.mu.Unlock()
 }
 
-// requestChannel is where a request thread lives: the requester's DM with
-// the app when /squadron was run in a DM, otherwise the configured channel.
+// requestChannel is where a request thread lives: wherever /squadron was
+// run (a channel, or the requester's DM with the app), otherwise the
+// configured channel.
 func (g *slackGateway) requestChannel(ts string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -122,17 +126,33 @@ func (g *slackGateway) requestChannel(ts string) string {
 	return g.channelID
 }
 
-// requesterLine names whoever started the request on its top-level
-// message. Slack makes a user mentioned in a thread's parent follow the
-// thread, so the requester hears about replies without each one tagging them.
-func (g *slackGateway) requesterLine(ts string) string {
+// requestLines are the gateway's own lines on a request's top-level
+// message: the run it started and who asked. A mission rewriting that
+// message doesn't know either, so they're put back on every rewrite. Slack
+// makes a user mentioned in a thread's parent follow the thread, so the
+// requester hears about replies without each one tagging them.
+func (g *slackGateway) requestLines(ts string) string {
 	g.mu.Lock()
 	user := g.requesters[ts]
+	run := g.missionLines[ts]
 	g.mu.Unlock()
-	if user == "" {
-		return ""
+	var lines []string
+	if run != "" {
+		lines = append(lines, run)
 	}
-	return requesterText(user)
+	if user != "" {
+		lines = append(lines, requesterText(user))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// missionLine names a run on its request's top-level message, linked to
+// the run's page when run_url is set so it can be opened from Slack.
+func (g *slackGateway) missionLine(mission, missionID string) string {
+	if g.runURL == "" {
+		return "*" + mission + "* (run `" + missionID + "`)"
+	}
+	return "*<" + strings.ReplaceAll(g.runURL, "{mission_id}", missionID) + "|" + mission + ">*"
 }
 
 func requesterText(user string) string {

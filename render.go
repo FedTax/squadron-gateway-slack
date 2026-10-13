@@ -26,8 +26,8 @@ func buildFallbackText(rec gatewaysdk.HumanInputRecord) string {
 //   - multi-select → section block whose accessory is the multi_static_select
 //     element (Slack rejects multi-selects inside actions blocks; they're
 //     only valid as section accessories or in input blocks).
-func buildBlocks(rec gatewaysdk.HumanInputRecord) []slack.Block {
-	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec), false, false)
+func buildBlocks(rec gatewaysdk.HumanInputRecord, topLevel bool) []slack.Block {
+	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec, topLevel), false, false)
 
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		return []slack.Block{
@@ -73,9 +73,12 @@ func fallbackThreadTitle(rec gatewaysdk.HumanInputRecord) string {
 //   - italics:       _text_
 //   - inline code:   `text`
 //   - strikethrough: ~text~    (single tildes)
-func buildMessageBody(rec gatewaysdk.HumanInputRecord) string {
+//
+// The summary heads a question only when it's posted top-level; in a
+// request thread the question itself is enough.
+func buildMessageBody(rec gatewaysdk.HumanInputRecord, topLevel bool) string {
 	var b strings.Builder
-	if rec.ShortSummary != "" {
+	if topLevel && rec.ShortSummary != "" {
 		b.WriteString("*")
 		b.WriteString(rec.ShortSummary)
 		b.WriteString("*\n")
@@ -104,15 +107,9 @@ func buildMessageBody(rec gatewaysdk.HumanInputRecord) string {
 
 func buildResolvedBody(rec gatewaysdk.HumanInputRecord) string {
 	var b strings.Builder
-	if rec.ShortSummary != "" {
-		b.WriteString("~*")
-		b.WriteString(rec.ShortSummary)
-		b.WriteString("*~\n")
-	} else {
-		b.WriteString("~")
-		b.WriteString(truncate(rec.Question, 200))
-		b.WriteString("~\n")
-	}
+	b.WriteString("~")
+	b.WriteString(truncate(rec.Question, 200))
+	b.WriteString("~\n")
 	b.WriteString("✅ ")
 	b.WriteString(formatResolvedResponse(rec))
 	if rec.ResponderUserID != "" {

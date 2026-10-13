@@ -133,6 +133,7 @@ that channel.
 | `checkpoint_path` | optional | Where the gateway persists the last event timestamp it processed and each mission's request thread. Defaults to `./.squadron-slack-gateway.json`. |
 | `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
 | `mcp_token`       | optional | The MCP host's `secret`, sent as a Bearer token. Use a `secret` variable. |
+| `run_url`         | optional | Link to a run's page, with `{mission_id}` where the run id goes. The mission name on a request's top-level message links there. |
 
 Set exactly one of `channel_id` or `channel_name`. `channel_id` is the
 most stable handle — renaming a channel won't break the gateway.
@@ -149,20 +150,20 @@ inputs aren't shown. Values for non-string inputs are entered as JSON,
 e.g. `["CO", "PA"]`.
 
 On **Start**, the gateway runs the mission and posts the request's
-top-level message in the configured channel, naming you as the
-requester. Everything the run says afterwards goes in that message's
+top-level message in the channel you ran it in, naming the mission and
+you as the requester. Everything the run says afterwards goes in that message's
 thread. If squadron rejects an input, the error shows on that field and
 the form stays open; any other start error is sent to you alone.
 
 Run `/squadron` in a DM instead to keep the request private: its
 top-level message, questions, updates and notifications all go to your
-DM with the app rather than the configured channel.
+DM with the app.
 
 ## Threads
 
 - A run started from `/squadron` replies under the message the gateway
-  posts when it starts the run: the mission, its run id, and
-  `Requester: @…`. Slack has users follow threads whose parent mentions
+  posts when it starts the run: the mission (linked to the run when
+  `run_url` is set, otherwise with its run id) and `Requester: @…`. Slack has users follow threads whose parent mentions
   them, so replies don't tag the requester.
 - `builtins.gateway.post` with `thread` set to a key (e.g. a ticket key)
   replies in that key's thread. A run that posts under a key joins that
@@ -170,10 +171,13 @@ DM with the app rather than the configured channel.
   records no link between a mission and one it routes to, so this is how
   a chained or resumed run finds its thread.
 - With `root: true`, the post replaces the thread's top-level message, or
-  posts it when there is none yet. The gateway keeps the `Requester: @…`
-  line on it.
+  posts it when there is none yet. The gateway adds its mission and
+  `Requester: @…` lines after the post's text on every rewrite.
 - A run that asks a question before it has a thread gets a top-level
-  message of `*<mission>*: <question summary>`.
+  message of `*<mission>*: <question summary>`. The question itself is a
+  reply in that thread.
+- A question in a thread shows without its summary heading. Once
+  answered, it's struck through, followed by the answer and who gave it.
 - A mission's `notification` block (`mission_completed`,
   `mission_failed` or `all`) posts in the run's thread, with the error
   when the run failed. A run with no thread posts nothing. A notification

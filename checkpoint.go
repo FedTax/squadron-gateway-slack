@@ -23,8 +23,11 @@ type checkpoint struct {
 	KeyThreads map[string]string `json:"key_threads,omitempty"`
 	// Requesters maps request thread ts → Slack user id of who started it.
 	Requesters map[string]string `json:"requesters,omitempty"`
+	// MissionLines maps request thread ts → the line naming the run it
+	// started.
+	MissionLines map[string]string `json:"mission_lines,omitempty"`
 	// ThreadChannels maps request thread ts → channel, for requests
-	// started in a DM rather than the configured channel.
+	// started outside the configured channel.
 	ThreadChannels map[string]string `json:"thread_channels,omitempty"`
 }
 
@@ -59,6 +62,9 @@ func (g *slackGateway) loadCheckpoint() {
 	for ts, user := range cp.Requesters {
 		g.requesters[ts] = user
 	}
+	for ts, line := range cp.MissionLines {
+		g.missionLines[ts] = line
+	}
 	for ts, channel := range cp.ThreadChannels {
 		g.threadChannels[ts] = channel
 	}
@@ -88,6 +94,7 @@ func (g *slackGateway) writeCheckpointLocked() {
 		MissionThreads: g.missionThreads,
 		KeyThreads:     g.keyThreads,
 		Requesters:     g.requesters,
+		MissionLines:   g.missionLines,
 		ThreadChannels: g.threadChannels,
 	})
 	if err != nil {

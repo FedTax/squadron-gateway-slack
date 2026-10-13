@@ -27,9 +27,9 @@ const (
 // doesn't say where /squadron was run.
 type startForm struct {
 	Mission string `json:"mission,omitempty"`
-	// DM keeps the request in the requester's DM with the app, for work
-	// the rest of the channel doesn't need to see.
-	DM bool `json:"dm,omitempty"`
+	// Channel is where /squadron was run, so the request stays there. A DM
+	// keeps it private to the requester.
+	Channel string `json:"channel,omitempty"`
 }
 
 func readStartForm(metadata string) startForm {
@@ -48,7 +48,7 @@ func (g *slackGateway) onSlashCommand(ctx context.Context, cmd slack.SlashComman
 		g.ephemeral(ctx, cmd.ChannelID, cmd.UserID, fmt.Sprintf("Couldn't list missions: %v", err))
 		return
 	}
-	if _, err := g.client.OpenViewContext(ctx, cmd.TriggerID, startModal(missions, startForm{DM: strings.HasPrefix(cmd.ChannelID, "D")}, nil)); err != nil {
+	if _, err := g.client.OpenViewContext(ctx, cmd.TriggerID, startModal(missions, startForm{Channel: cmd.ChannelID}, nil)); err != nil {
 		log.Printf("open start modal: %v", err)
 	}
 }
@@ -179,6 +179,11 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 		g.ack(req)
 		return
 	}
+	channel := form.Channel
+	if channel == "" {
+		channel = g.channelID
+	}
+	dm := strings.HasPrefix(channel, "D")
 	missionID, err := g.mcp.startMission(ctx, form.Mission, inputs)
 	if err != nil {
 		if errs := startFieldErrors(cb, err); errs != nil {
@@ -187,27 +192,28 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 		}
 		g.ack(req)
 		text := fmt.Sprintf("Couldn't start `%s`: %v", form.Mission, err)
-		if form.DM {
+		if dm {
 			g.postToDM(ctx, cb.User.ID, text)
 		} else {
-			g.ephemeral(ctx, g.channelID, cb.User.ID, text)
+			g.ephemeral(ctx, channel, cb.User.ID, text)
 		}
 		return
 	}
 	g.ack(req)
 	// Slack delivers a post addressed to a user ID to that user's DM with
 	// the app; the DM's own channel ID comes back for the thread's later posts.
-	target := g.channelID
-	if form.DM {
+	target := channel
+	if dm {
 		target = cb.User.ID
 	}
+	run := g.missionLine(form.Mission, missionID)
 	channel, ts, err := g.client.PostMessageContext(ctx, target,
-		slack.MsgOptionText(fmt.Sprintf("*%s* (run `%s`)\n%s", form.Mission, missionID, requesterText(cb.User.ID)), false))
+		slack.MsgOptionText(run+"\n"+requesterText(cb.User.ID), false))
 	if err != nil {
 		log.Printf("post request message for %s: %v", missionID, err)
 		return
 	}
-	g.rememberRequest(ts, channel, cb.User.ID)
+	g.rememberRequest(ts, channel, cb.User.ID, run)
 	g.rememberRun(missionID, ts)
 }
 

@@ -79,17 +79,28 @@ func TestBuildMessageBody(t *testing.T) {
 	cases := []struct {
 		name        string
 		rec         gatewaysdk.HumanInputRecord
+		topLevel    bool
 		wantContain []string
 		wantOmit    []string
 	}{
 		{
-			name: "short summary becomes the bold title (single asterisks for slack mrkdwn)",
+			name: "top-level: short summary becomes the bold title (single asterisks for slack mrkdwn)",
 			rec: gatewaysdk.HumanInputRecord{
 				ShortSummary: "Vibe?",
 				Question:     "Pick a vibe.",
 			},
+			topLevel:    true,
 			wantContain: []string{"*Vibe?*", "Pick a vibe."},
 			wantOmit:    []string{"**Vibe?**"},
+		},
+		{
+			name: "in a thread: no summary title",
+			rec: gatewaysdk.HumanInputRecord{
+				ShortSummary: "Vibe?",
+				Question:     "Pick a vibe.",
+			},
+			wantContain: []string{"Pick a vibe."},
+			wantOmit:    []string{"Vibe?"},
 		},
 		{
 			name: "multi-select adds the dropdown hint",
@@ -145,7 +156,7 @@ func TestBuildMessageBody(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			body := buildMessageBody(tc.rec)
+			body := buildMessageBody(tc.rec, tc.topLevel)
 			for _, sub := range tc.wantContain {
 				if !strings.Contains(body, sub) {
 					t.Errorf("body missing %q\nfull body:\n%s", sub, body)
@@ -169,7 +180,7 @@ func TestBuildResolvedBodyStrikesThroughOriginal(t *testing.T) {
 	})
 	// Slack mrkdwn uses single tildes for strikethrough; ensure we
 	// don't emit Discord-style double tildes.
-	for _, want := range []string{"~*Vibe?*~", "✅", "Relaxed", "slack:alice"} {
+	for _, want := range []string{"~Pick a vibe.~", "✅", "Relaxed", "slack:alice"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("resolved body missing %q\nfull body:\n%s", want, body)
 		}
@@ -197,7 +208,7 @@ func TestBuildBlocksFreeTextHasAnswerButton(t *testing.T) {
 	blocks := buildBlocks(gatewaysdk.HumanInputRecord{
 		ToolCallID: "tc",
 		Question:   "What do you think?",
-	})
+	}, false)
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (section + Answer button), got %d", len(blocks))
 	}
@@ -222,7 +233,7 @@ func TestBuildBlocksSingleSelectUsesButtons(t *testing.T) {
 		ToolCallID: "tc-1",
 		Question:   "Pick one.",
 		Choices:    []string{"A", "B", "C"},
-	})
+	}, false)
 	// section + actions = 2 blocks
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (section + actions), got %d", len(blocks))
@@ -250,7 +261,7 @@ func TestBuildBlocksMultiSelectIsSectionAccessory(t *testing.T) {
 		Question:    "Pick any.",
 		Choices:     []string{"A", "B", "C"},
 		MultiSelect: true,
-	})
+	}, false)
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block (section with accessory), got %d", len(blocks))
 	}

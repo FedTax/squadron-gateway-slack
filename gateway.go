@@ -26,13 +26,18 @@ type slackGateway struct {
 	// request resolves (regardless of which surface resolved it).
 	messages map[string]postedMessage
 
-	// mission id → request thread ts, thread key → request thread ts,
-	// request thread ts → requester, and request thread ts → channel for
-	// requests started in a DM. Persisted in the checkpoint; see threads.go.
+	// mission id → request thread ts, thread key → request thread ts, and
+	// per request thread ts its requester, the run it started, and its
+	// channel when that isn't the configured one. Persisted in the
+	// checkpoint; see threads.go.
 	missionThreads map[string]string
 	keyThreads     map[string]string
 	requesters     map[string]string
+	missionLines   map[string]string
 	threadChannels map[string]string
+
+	// run_url: the run page link template, with {mission_id}.
+	runURL string
 
 	// nil when mcp_url isn't set: missions can't be started from Slack and
 	// runs the gateway didn't start can't be traced to their thread.
@@ -52,6 +57,7 @@ func newSlackGateway() *slackGateway {
 		missionThreads: map[string]string{},
 		keyThreads:     map[string]string{},
 		requesters:     map[string]string{},
+		missionLines:   map[string]string{},
 		threadChannels: map[string]string{},
 	}
 }
@@ -88,6 +94,7 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 	if mcpURL := strings.TrimSpace(settings["mcp_url"]); mcpURL != "" {
 		g.mcp = &squadronMCP{url: mcpURL, token: strings.TrimSpace(settings["mcp_token"])}
 	}
+	g.runURL = strings.TrimSpace(settings["run_url"])
 	g.loadCheckpoint()
 
 	api2 := slack.New(botToken, slack.OptionAppLevelToken(appToken))

@@ -147,12 +147,12 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 	g := fresh()
 
 	g.onSlashCommand(ctx, slack.SlashCommand{ChannelID: "D0APPDM", UserID: "UTEST", TriggerID: "trigger"})
-	if len(calls) != 1 || !readStartForm(calls[0].metadata).DM {
-		t.Fatalf("a /squadron run in a DM must mark the form as a DM start; got %+v", calls)
+	if len(calls) != 1 || readStartForm(calls[0].metadata).Channel != "D0APPDM" {
+		t.Fatalf("the form must carry the DM it was opened in; got %+v", calls)
 	}
 	g.onStartSubmitted(ctx, nil, slack.InteractionCallback{User: slack.User{ID: "UTEST"}, View: slack.View{
 		CallbackID:      startCallbackID,
-		PrivateMetadata: `{"mission":"rate_triage","dm":true}`,
+		PrivateMetadata: `{"mission":"rate_triage","channel":"D0APPDM"}`,
 		State:           &slack.ViewState{Values: map[string]map[string]slack.BlockAction{}},
 	}})
 	if got := calls[1]; got.method != "chat.postMessage" || got.channel != "UTEST" {
@@ -179,5 +179,52 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 	}
 	if got := calls[4]; got.method != "chat.update" || got.channel != "DTEST" {
 		t.Errorf("after a restart the top-level message must still be updated in the DM; got %+v", got)
+	}
+}
+
+func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
+	type call struct{ method, channel, text string }
+	var mu sync.Mutex
+	var calls []call
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		c := call{method: strings.TrimPrefix(r.URL.Path, "/"), channel: r.PostForm.Get("channel"), text: r.PostForm.Get("text")}
+		mu.Lock()
+		calls = append(calls, c)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": c.channel, "ts": "1700000000.000002"})
+	}))
+	defer api.Close()
+
+	missions := server.NewMCPServer("mock-squadron", "test", server.WithToolCapabilities(true))
+	missions.AddTool(mcp.NewTool("run_mission"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(`{"missionId":"run-triage"}`), nil
+	})
+	missionAPI := httptest.NewServer(server.NewStreamableHTTPServer(missions))
+	defer missionAPI.Close()
+
+	g := newSlackGateway()
+	g.client = slack.New("xoxb-test", slack.OptionAPIURL(api.URL+"/"), slack.OptionHTTPClient(api.Client()))
+	g.channelID = "CTEST"
+	g.runURL = "https://cc.example/runs/{mission_id}"
+	g.mcp = &squadronMCP{url: missionAPI.URL + "/mcp"}
+	ctx := context.Background()
+
+	g.onStartSubmitted(ctx, nil, slack.InteractionCallback{User: slack.User{ID: "UTEST"}, View: slack.View{
+		CallbackID:      startCallbackID,
+		PrivateMetadata: `{"mission":"rate_triage","channel":"CSECOND"}`,
+		State:           &slack.ViewState{Values: map[string]map[string]slack.BlockAction{}},
+	}})
+	run := "*<https://cc.example/runs/run-triage|rate_triage>*"
+	if got := calls[0]; got.channel != "CSECOND" || got.text != run+"\nRequester: <@UTEST>" {
+		t.Fatalf("the request must post in the channel /squadron was run in, linked to the run; got %+v", got)
+	}
+
+	if err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Fixing CO","root":true}`}); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls[1]; got.method != "chat.update" || got.channel != "CSECOND" || got.text != "Fixing CO\n"+run+"\nRequester: <@UTEST>" {
+		t.Errorf("a root rewrite must stay in that channel and keep the run and requester lines; got %+v", got)
 	}
 }

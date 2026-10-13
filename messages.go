@@ -55,7 +55,7 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		channel = g.requestChannel(thread)
 	}
 
-	blocks := buildBlocks(rec)
+	blocks := buildBlocks(rec, thread == "")
 	opts := []slack.MsgOption{
 		slack.MsgOptionText(buildFallbackText(rec), false),
 		slack.MsgOptionBlocks(blocks...),
@@ -195,13 +195,11 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 			log.Printf("slack blocks parse: %v", err)
 		}
 	}
-	// A mission rewriting the top-level message doesn't know who asked, so
-	// the requester line is put back each time or they'd stop following.
 	if p.Root {
-		if line := g.requesterLine(thread); line != "" {
-			text += "\n" + line
+		if lines := g.requestLines(thread); lines != "" {
+			text += "\n" + lines
 			if blocks != nil {
-				blocks = append(blocks, slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, line, false, false)))
+				blocks = append(blocks, slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, lines, false, false)))
 			}
 		}
 	}
