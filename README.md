@@ -1,14 +1,10 @@
 # squadron-gateway-slack
 
-A Squadron gateway that runs missions out of one Slack channel. Each
-request gets a single top-level message — the one the gateway posts
-when someone starts a mission with `/squadron`, or one it posts the first time a run
-needs to say something — and everything else about it goes in that
-message's thread: `builtins.human.ask` questions (answered with buttons, a
-multi-select dropdown, or an Answer modal), `builtins.gateway.post`
-posts, and lifecycle notifications. The top-level message names whoever
-started the request (`Requester: @…`), which makes Slack have them follow
-the thread, so replies don't tag them.
+A Squadron gateway for Slack. Starting a mission posts a message, and
+everything the run sends after that goes in that message's thread:
+`builtins.human.ask` questions (answered with buttons, a multi-select
+dropdown, or an Answer modal), `builtins.gateway.post` posts, and
+lifecycle notifications. What a post says is whatever the mission sends.
 
 ## Setup walkthrough
 
@@ -66,15 +62,16 @@ public URL.
    commands and messages from the messages tab** (manifest:
    `messages_tab_enabled: true`, `messages_tab_read_only_enabled: false`).
 
-### 5. Invite the bot to your channel
+### 5. Invite the bot to your channels
 
-In Slack, in the channel where questions should land:
+In Slack, in each channel you'll use:
 
 ```
 /invite @squadron
 ```
 
-Then grab the channel ID: click the channel name → **About** → bottom
+Then grab the ID of the channel that runs not started from Slack should
+post to: click the channel name → **About** → bottom
 of the panel shows `Channel ID: C0123456789`. Stash it:
 
 ```bash
@@ -116,14 +113,14 @@ mcp_host {
 ```
 
 `mcp_url` points at squadron's own [MCP host](https://github.com/mlund01/squadron).
-The gateway SDK only lets a gateway list and answer questions, so the
-gateway uses MCP to start missions (`run_mission`) and to find the thread
-of a run it didn't start (`get_run_details`). Without it, questions and
-posts still work, but missions can't be started from Slack.
+The gateway uses MCP to list missions and their inputs and to start them
+(`list_missions`, `get_mission_config`, `run_mission`). Without it,
+questions and posts still work, but missions can't be started from Slack.
 
 Restart squadron. The log should show `gateway "slack" started` and
 something like `slack gateway ready (channel=C0123…, bot=U0123…)`.
-The next `builtins.human.ask` call lands in your channel.
+The next `builtins.human.ask` call from a run not started in Slack lands in
+that channel.
 
 ## Settings reference
 
@@ -131,12 +128,11 @@ The next `builtins.human.ask` call lands in your channel.
 | ----------------- | -------- | --------------------------------------------------------------------- |
 | `bot_token`       | yes      | Bot User OAuth Token (`xoxb-…`). Use a `secret` variable.             |
 | `app_token`       | yes      | App-Level Token (`xapp-…`) with `connections:write`. Use a `secret` variable. |
-| `channel_id`      | one of   | Slack channel ID (e.g. `C0123456789`).                                |
+| `channel_id`      | one of   | Slack channel ID (e.g. `C0123456789`) for runs not started from Slack. |
 | `channel_name`    | one of   | Channel name (e.g. `general` or `#general`). Resolved at startup; needs `channels:read` / `groups:read`. |
 | `checkpoint_path` | optional | Where the gateway persists the last event timestamp it processed and each mission's request thread. Defaults to `./.squadron-slack-gateway.json`. |
 | `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
 | `mcp_token`       | optional | The MCP host's `secret`, sent as a Bearer token. Use a `secret` variable. |
-| `threads`         | optional | JSON object of mission name → `{"key": …, "title": …}` templates; see [Keeping a request in one thread](#keeping-a-request-in-one-thread). |
 
 Set exactly one of `channel_id` or `channel_name`. `channel_id` is the
 most stable handle — renaming a channel won't break the gateway.
@@ -162,39 +158,26 @@ Run `/squadron` in a DM instead to keep the request private: its
 top-level message, questions, updates and notifications all go to your
 DM with the app rather than the configured channel.
 
-## Keeping a request in one thread
+## Threads
 
-Each request gets one top-level message, and everything else about it
-goes in that message's thread:
-
-- A run started from `/squadron` uses the message the gateway posts
-  when it starts the run.
-- `builtins.gateway.post` with `thread` set to a key naming the request
-  (e.g. its ticket key) replies in that request's thread. A run that
-  posts under a key joins that thread, so its later questions and
-  notifications go there too. That is how a chained or resumed run finds
-  its request: squadron records no link between a mission and the one
-  it routes to.
-- With `root: true`, the post becomes the request's top-level message:
-  posted when the request has none, otherwise edited in place. Missions
-  use this to keep a current summary at the top of the thread, e.g.
-
-  ```
-  *<https://…/browse/DEV-8212|DEV-8212>*
-  Some rates are wrong in X, Y and Z.
-  Cause: …
-  Status: fixing
-  ```
+- A run started from `/squadron` replies under the message the gateway
+  posts when it starts the run: the mission, its run id, and
+  `Requester: @…`. Slack has users follow threads whose parent mentions
+  them, so replies don't tag the requester.
+- `builtins.gateway.post` with `thread` set to a key (e.g. a ticket key)
+  replies in that key's thread. A run that posts under a key joins that
+  thread, so its later questions and notifications go there too. Squadron
+  records no link between a mission and one it routes to, so this is how
+  a chained or resumed run finds its thread.
+- With `root: true`, the post replaces the thread's top-level message, or
+  posts it when there is none yet. The gateway keeps the `Requester: @…`
+  line on it.
 - A run that asks a question before it has a thread gets a top-level
-  message of `*<mission>*: <question summary>`, which the mission can
-  later rewrite with `root`.
-- A rewrite with `root` keeps the `Requester: @…` line, so the requester
-  keeps following the thread.
+  message of `*<mission>*: <question summary>`.
 - A mission's `notification` block (`mission_completed`,
   `mission_failed` or `all`) posts in the run's thread, with the error
-  when the run failed. A run with no thread posts nothing, so a request
-  never gets a second top-level message. A notification with its own
-  `channel` posts top-level in that channel.
+  when the run failed. A run with no thread posts nothing. A notification
+  with its own `channel` posts top-level in that channel.
 
 ## What the operator sees
 

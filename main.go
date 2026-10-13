@@ -1,7 +1,7 @@
-// Squadron Slack gateway. Subscribes to ask_human events from a
-// running squadron and bridges them to a Slack channel: new
-// questions become messages with choice buttons; clicking a button
-// (or replying in the message's thread) resolves the request.
+// Squadron Slack gateway. Starting a mission from /squadron posts a
+// message, and the run's questions, gateway.post messages and
+// notifications go in that message's thread. Choice questions get
+// buttons or a select; free-text questions get an Answer modal.
 //
 // Required HCL settings:
 //
@@ -20,8 +20,9 @@
 //	checkpoint_path = "/abs/path/to/checkpoint.json"   // default: ./.squadron-slack-gateway.json
 //
 // The checkpoint file holds the latest event timestamp the gateway has
-// processed; on restart we ask squadron for everything since then so
-// transient disconnects don't drop events.
+// processed, so a restart asks squadron for everything since then and
+// transient disconnects don't drop events, plus each request's thread so
+// later posts still find it.
 package main
 
 import "github.com/mlund01/squadron-gateway-sdk"

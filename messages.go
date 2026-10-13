@@ -123,10 +123,10 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 
 // slackPostDescription + slackPostSchema are advertised to squadron via
 // MessageToolSpec so the LLM knows how to format a Slack post.
-const slackPostDescription = "Post a message to the Slack channel. " +
+const slackPostDescription = "Post a Slack message. " +
 	"`text` is the message body and supports Slack mrkdwn (*bold*, _italics_, `code`, > quotes, <url|label> links). " +
 	"`channel` optionally overrides the destination — a channel name (with or without a leading #) or id. " +
-	"`thread` is a key naming the request (e.g. its ticket key): the post replies in that request's thread, or becomes its top-level message when there is none yet. Set `root` to post or rewrite the request's top-level message instead of replying, e.g. a heading, summary and current status that you update as the work moves on. " +
+	"`thread` is a key naming the request (e.g. its ticket key): the post replies in that request's thread, or becomes its top-level message when there is none yet. Set `root` to replace the request's top-level message with this post instead of replying. " +
 	"`blocks` is an optional Slack Block Kit array for rich layout; each element is a block object with a `type`. Common types: " +
 	"`header` = {\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"...\"}}; " +
 	"`section` = {\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"...\"}} (or use \"fields\":[{\"type\":\"mrkdwn\",\"text\":\"...\"}] for a two-column grid); " +
@@ -142,7 +142,7 @@ const slackPostSchema = `{
     "text": {"type": "string", "description": "Message body (Slack mrkdwn supported). When blocks are set, this is the notification/preview fallback."},
     "channel": {"type": "string", "description": "Optional channel name or id override."},
     "thread": {"type": "string", "description": "Optional key naming the request, e.g. its ticket key. Runs that post under the same key share one thread. Ignored when channel is set."},
-    "root": {"type": "boolean", "description": "Make this the request's top-level message: posted when the request has none, otherwise edited in place. Use it to keep a current summary and status at the top of the thread."},
+    "root": {"type": "boolean", "description": "Replace the request's top-level message with this post, or post it when the request has none, instead of replying in its thread."},
     "blocks": {
       "type": "array",
       "description": "Optional Slack Block Kit blocks for rich layout. Each item is a block object with a 'type'. Common types: header, section (text or fields), divider, context, image, actions (buttons). Example: [{\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"Deploy\"}},{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"*v2* shipped to prod\"}},{\"type\":\"divider\"},{\"type\":\"context\",\"elements\":[{\"type\":\"mrkdwn\",\"text\":\"3m 12s\"}]}]",
