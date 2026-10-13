@@ -241,3 +241,21 @@ Adjust the platform path to match `runtime.GOOS-runtime.GOARCH`.
   — same protocol, different surface; useful as a reference.
 - [`squadron-gateway-sdk`](https://github.com/mlund01/squadron-gateway-sdk)
   — the Go SDK if you want to build a gateway for some other system.
+
+## Preview messages without Slack credentials
+
+Run the real message handlers against local fake Slack and MCP servers:
+
+```bash
+SQUADRON_SLACK_PREVIEW="$PWD/slack-calls.json" \
+  go test -run '^TestMockSlackPreview$' -count=1 -v
+```
+
+The output records outgoing API payloads for externally started and slash-command
+started cases, including root edits, threaded replies, questions, failures, and
+checkpoint reload. No Slack app or model is contacted. The JSON `checks` report
+whether the cases kept one thread. A passing walkthrough means the capture
+completed; false checks remain visible as behavior to investigate. The mission
+API, agent decisions, and incoming answers are scripted, so this does not validate
+Socket Mode delivery or actual rate-workflow execution. Keep the generated JSON
+outside version control.
