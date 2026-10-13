@@ -29,3 +29,16 @@ func TestThreadForPostJoinsRunToKeyThread(t *testing.T) {
 		t.Errorf("no run mapping and no key must start a new thread; got %q", got)
 	}
 }
+
+func TestThreadForPostFilesKeyUnderRunThread(t *testing.T) {
+	g := newSlackGateway()
+	g.checkpointPath = ""
+	g.missionThreads["run-1"] = "1700000000.000100"
+
+	if got := g.threadForPost("run-1", "DEV-123"); got != "1700000000.000100" {
+		t.Fatalf("got %q", got)
+	}
+	if got := g.threadForPost("run-2", "DEV-123"); got != "1700000000.000100" {
+		t.Errorf("a later run posting the same key must join the started run's thread; got %q", got)
+	}
+}

@@ -16,17 +16,31 @@ func (g *slackGateway) threadForMission(missionID string) string {
 }
 
 // threadForPost finds the request thread for a gateway.post: the posting
-// run's own thread, else the one filed under the post's key. A run that
-// joins by key is mapped to it, so its later questions land there too.
+// run's own thread, else the one filed under the post's key. The run and an
+// unfiled key are both recorded against that thread, so the run's later
+// questions land there and a run started elsewhere under the same key (a
+// route, a resume) joins it instead of opening a second top-level message.
 func (g *slackGateway) threadForPost(missionID, key string) string {
 	g.mu.Lock()
+	defer g.mu.Unlock()
 	ts := g.missionThreads[missionID]
 	if ts == "" && key != "" {
 		ts = g.keyThreads[key]
 	}
-	g.mu.Unlock()
-	if ts != "" && missionID != "" {
-		g.rememberRun(missionID, ts)
+	if ts == "" {
+		return ""
+	}
+	changed := false
+	if missionID != "" && g.missionThreads[missionID] != ts {
+		g.missionThreads[missionID] = ts
+		changed = true
+	}
+	if key != "" && g.keyThreads[key] == "" {
+		g.keyThreads[key] = ts
+		changed = true
+	}
+	if changed {
+		g.writeCheckpointLocked()
 	}
 	return ts
 }
