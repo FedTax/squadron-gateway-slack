@@ -84,16 +84,6 @@ func (g *slackGateway) rememberKey(key, ts string) {
 	g.mu.Unlock()
 }
 
-func (g *slackGateway) forgetKey(key string) {
-	if key == "" {
-		return
-	}
-	g.mu.Lock()
-	delete(g.keyThreads, key)
-	g.writeCheckpointLocked()
-	g.mu.Unlock()
-}
-
 func (g *slackGateway) threadForKey(key string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -128,9 +118,7 @@ func (g *slackGateway) requestChannel(ts string) string {
 
 // requestLines are the gateway's own lines on a request's top-level
 // message: the run it started and who asked. A mission rewriting that
-// message doesn't know either, so they're put back on every rewrite. Slack
-// makes a user mentioned in a thread's parent follow the thread, so the
-// requester hears about replies without each one tagging them.
+// message doesn't know either, so they're put back on every rewrite.
 func (g *slackGateway) requestLines(ts string) string {
 	g.mu.Lock()
 	user := g.requesters[ts]

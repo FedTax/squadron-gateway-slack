@@ -85,11 +85,6 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	if got := g.requestLines("1700000000.999999"); got != "" {
 		t.Errorf("requesterLine unknown thread: got %q", got)
 	}
-
-	g.forgetKey("DEV-123")
-	if got := g.threadForKey("DEV-123"); got != "" {
-		t.Errorf("forgotten key still maps to %q", got)
-	}
 }
 
 func TestCheckpointNeverMovesBackward(t *testing.T) {
