@@ -56,12 +56,13 @@ func (g *slackGateway) startThread(ctx context.Context, missionID, title string)
 	if client == nil {
 		return "", fmt.Errorf("slack client not initialized")
 	}
-	_, ts, err := client.PostMessageContext(ctx, channel, slack.MsgOptionText(title, false))
+	posted, ts, err := client.PostMessageContext(ctx, channel, slack.MsgOptionText(title, false))
 	if err != nil {
 		return "", fmt.Errorf("post thread root: %w", err)
 	}
-	g.rememberRun(missionID, ts)
-	return ts, nil
+	thread := threadID(posted, ts)
+	g.rememberRun(missionID, thread)
+	return thread, nil
 }
 
 func (g *slackGateway) rememberRun(missionID, ts string) {
@@ -90,32 +91,33 @@ func (g *slackGateway) threadForKey(key string) string {
 	return g.keyThreads[key]
 }
 
-// request is a /squadron start, filed under its top-level message's ts.
-// Its channel is where every later post for the request must go, and its
+// threadID names a request thread by its channel and its top-level
+// message's Slack ts. Slack only guarantees a ts is unique within one
+// conversation (docs.slack.dev/messaging/retrieving-messages), so a ts on
+// its own could match requests in two channels.
+func threadID(channel, ts string) string {
+	return channel + "/" + ts
+}
+
+// splitThreadID gives back the channel every post for the request must go
+// to, and the ts its replies hang off.
+func splitThreadID(thread string) (channel, ts string) {
+	channel, ts, _ = strings.Cut(thread, "/")
+	return channel, ts
+}
+
+// request is a /squadron start, filed under its request thread ID. Its
 // requester and mission line are put back on each root rewrite.
 type request struct {
-	Channel     string `json:"channel"`
 	Requester   string `json:"requester"`
 	MissionLine string `json:"mission_line"`
 }
 
-func (g *slackGateway) rememberRequest(ts, channel, userID, missionLine string) {
+func (g *slackGateway) rememberRequest(thread, userID, missionLine string) {
 	g.mu.Lock()
-	g.requests[ts] = request{Channel: channel, Requester: userID, MissionLine: missionLine}
+	g.requests[thread] = request{Requester: userID, MissionLine: missionLine}
 	g.writeCheckpointLocked()
 	g.mu.Unlock()
-}
-
-// requestChannel is where a request thread lives: wherever /squadron was
-// run (a channel, or the requester's DM with the app), otherwise the
-// configured channel.
-func (g *slackGateway) requestChannel(ts string) string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if channel := g.requests[ts].Channel; channel != "" {
-		return channel
-	}
-	return g.channelID
 }
 
 // requestLines are the gateway's own lines on a request's top-level

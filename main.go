@@ -1,7 +1,9 @@
-// Squadron Slack gateway. Starting a mission from /squadron posts a
-// message, and the run's questions, gateway.post messages and
-// notifications go in that message's thread. Choice questions get
-// buttons or a select; free-text questions get an Answer modal.
+// Squadron Slack gateway. Subscribes to a running squadron's ask_human
+// questions and mission notifications and posts them to Slack, and starts
+// missions from /squadron. Each request gets one message, and its run's
+// questions, gateway.post messages and notifications go in that message's
+// thread. Choice questions get buttons or a select plus Other; free-text
+// questions get an Answer modal.
 //
 // Required HCL settings:
 //

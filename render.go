@@ -118,8 +118,10 @@ func buildMessageBody(rec gatewaysdk.HumanInputRecord, topLevel bool) string {
 
 func buildResolvedBody(rec gatewaysdk.HumanInputRecord) string {
 	var b strings.Builder
+	// The whole question, not a cut-down one: the answer only makes sense
+	// next to what was asked, and the posted question was already this long.
 	b.WriteString("~")
-	b.WriteString(truncate(rec.Question, 200))
+	b.WriteString(rec.Question)
 	b.WriteString("~\n")
 	b.WriteString("✅ ")
 	b.WriteString(formatResolvedResponse(rec))

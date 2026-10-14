@@ -213,8 +213,9 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 		log.Printf("post request message for %s: %v", missionID, err)
 		return
 	}
-	g.rememberRequest(ts, channel, cb.User.ID, run)
-	g.rememberRun(missionID, ts)
+	thread := threadID(channel, ts)
+	g.rememberRequest(thread, cb.User.ID, run)
+	g.rememberRun(missionID, thread)
 }
 
 func (g *slackGateway) postToDM(ctx context.Context, user, text string) {

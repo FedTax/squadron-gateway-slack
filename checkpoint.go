@@ -17,11 +17,12 @@ import (
 
 type checkpoint struct {
 	Latest time.Time `json:"latest"`
-	// MissionThreads maps mission id → request thread ts.
+	// MissionThreads maps mission id → request thread ID (channel/Slack ts).
 	MissionThreads map[string]string `json:"mission_threads,omitempty"`
-	// KeyThreads maps rendered thread key → request thread ts.
+	// KeyThreads maps rendered thread key → request thread ID (channel/Slack ts).
 	KeyThreads map[string]string `json:"key_threads,omitempty"`
-	// Requests maps request thread ts → the /squadron start it holds.
+	// Requests maps request thread ID (channel/Slack ts) → the /squadron
+	// start it holds.
 	Requests map[string]request `json:"requests,omitempty"`
 }
 
@@ -47,14 +48,14 @@ func (g *slackGateway) loadCheckpoint() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.latest = cp.Latest
-	for id, ts := range cp.MissionThreads {
-		g.missionThreads[id] = ts
+	for id, thread := range cp.MissionThreads {
+		g.missionThreads[id] = thread
 	}
-	for key, ts := range cp.KeyThreads {
-		g.keyThreads[key] = ts
+	for key, thread := range cp.KeyThreads {
+		g.keyThreads[key] = thread
 	}
-	for ts, req := range cp.Requests {
-		g.requests[ts] = req
+	for thread, req := range cp.Requests {
+		g.requests[thread] = req
 	}
 }
 

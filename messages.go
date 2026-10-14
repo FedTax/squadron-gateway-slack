@@ -51,8 +51,9 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		}
 	}
 
+	var threadTS string
 	if thread != "" {
-		channel = g.requestChannel(thread)
+		channel, threadTS = splitThreadID(thread)
 	}
 
 	blocks := buildBlocks(rec, thread == "")
@@ -60,8 +61,8 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		slack.MsgOptionText(buildFallbackText(rec), false),
 		slack.MsgOptionBlocks(blocks...),
 	}
-	if thread != "" {
-		opts = append(opts, slack.MsgOptionTS(thread))
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
 	}
 	_, ts, err := client.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
@@ -90,8 +91,9 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	}
 	body := buildNotificationBody(rec)
 	thread := g.threadForMission(rec.MissionID)
+	var threadTS string
 	if thread != "" {
-		channel = g.requestChannel(thread)
+		channel, threadTS = splitThreadID(thread)
 	} else if rec.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, rec.Channel, channel)
 	}
@@ -106,18 +108,15 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 		slack.MsgOptionText(body, false),
 		slack.MsgOptionBlocks(blocks...),
 	}
-	if thread != "" {
-		opts = append(opts, slack.MsgOptionTS(thread))
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
 	}
 	posted, ts, err := client.PostMessageContext(ctx, channel, opts...)
 	if err != nil {
 		return fmt.Errorf("post notification: %w", err)
 	}
 	if thread == "" {
-		g.rememberRun(rec.MissionID, ts)
-		if rec.Channel != "" {
-			g.rememberRequest(ts, posted, "", "")
-		}
+		g.rememberRun(rec.MissionID, threadID(posted, ts))
 	}
 	return nil
 }
@@ -180,8 +179,9 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		return fmt.Errorf("slack client not initialized")
 	}
 	thread := g.threadForPost(req.MissionID, p.Thread)
+	var threadTS string
 	if thread != "" {
-		channel = g.requestChannel(thread)
+		channel, threadTS = splitThreadID(thread)
 	} else if p.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
 	}
@@ -213,11 +213,11 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	case p.Root && thread != "":
 		// The top-level message is rewritten in place, so it always reads as
 		// the request's current state rather than its first.
-		if _, _, _, err := client.UpdateMessageContext(ctx, channel, thread, opts...); err != nil {
+		if _, _, _, err := client.UpdateMessageContext(ctx, channel, threadTS, opts...); err != nil {
 			return fmt.Errorf("update request message: %w", err)
 		}
 	case thread != "" && !p.Root:
-		if _, _, err := client.PostMessageContext(ctx, channel, append(opts, slack.MsgOptionTS(thread))...); err != nil {
+		if _, _, err := client.PostMessageContext(ctx, channel, append(opts, slack.MsgOptionTS(threadTS))...); err != nil {
 			return fmt.Errorf("post message: %w", err)
 		}
 	default:
@@ -227,16 +227,14 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		}
 		// A request with no thread yet takes this post as its one
 		// top-level message.
-		thread = ts
-		g.rememberRun(req.MissionID, ts)
-		g.rememberKey(p.Thread, ts)
-		if p.Channel != "" {
-			g.rememberRequest(ts, posted, "", "")
-		}
+		channel, threadTS = posted, ts
+		thread = threadID(posted, ts)
+		g.rememberRun(req.MissionID, thread)
+		g.rememberKey(p.Thread, thread)
 	}
 
 	for _, a := range req.Attachments {
-		g.uploadAttachment(ctx, client, channel, thread, a)
+		g.uploadAttachment(ctx, client, channel, threadTS, a)
 	}
 	return nil
 }

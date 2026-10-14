@@ -64,26 +64,34 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	dir := t.TempDir()
 	g := newSlackGateway()
 	g.checkpointPath = filepath.Join(dir, "cp.json")
+	thread := threadID("CTEST", "1700000000.000100")
 
-	g.rememberRequest("1700000000.000100", g.channelID, "U1", "*rate_triage*")
-	g.rememberRun("mission-1", "1700000000.000100")
-	g.rememberKey("DEV-123", "1700000000.000100")
+	g.rememberRequest(thread, "U1", "*rate_triage*")
+	g.rememberRun("mission-1", thread)
+	g.rememberKey("DEV-123", thread)
 
 	cp := g.readCheckpoint()
-	if cp.MissionThreads["mission-1"] != "1700000000.000100" {
+	if cp.MissionThreads["mission-1"] != thread {
 		t.Errorf("mission thread not persisted: %+v", cp.MissionThreads)
 	}
-	if cp.KeyThreads["DEV-123"] != "1700000000.000100" {
+	if cp.KeyThreads["DEV-123"] != thread {
 		t.Errorf("key thread not persisted: %+v", cp.KeyThreads)
 	}
-	if cp.Requests["1700000000.000100"].Requester != "U1" {
+	if cp.Requests[thread].Requester != "U1" {
 		t.Errorf("requester not persisted: %+v", cp.Requests)
 	}
-	if got := g.requestLines("1700000000.000100"); got != "*rate_triage*\nRequester: <@U1>" {
+	if got := g.requestLines(thread); got != "*rate_triage*\nRequester: <@U1>" {
 		t.Errorf("requesterLine: got %q", got)
 	}
-	if got := g.requestLines("1700000000.999999"); got != "" {
-		t.Errorf("requesterLine unknown thread: got %q", got)
+	if got := g.requestLines(threadID("COTHER", "1700000000.000100")); got != "" {
+		t.Errorf("the same ts in another channel is another request; got %q", got)
+	}
+}
+
+func TestSplitThreadIDGivesBackChannelAndTS(t *testing.T) {
+	channel, ts := splitThreadID(threadID("D0APPDM", "1700000000.000100"))
+	if channel != "D0APPDM" || ts != "1700000000.000100" {
+		t.Errorf("got channel=%q ts=%q", channel, ts)
 	}
 }
 

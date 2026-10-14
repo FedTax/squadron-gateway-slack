@@ -18,10 +18,13 @@ line and `Requester: <@user>`, for requests started from `/squadron`. With
 
 ## How a run finds its thread
 
-A request thread is identified by the `ts` of its top-level message. It's what
-`chat.postMessage` returns for the posted message (alongside its channel), and
-what the gateway passes as `thread_ts` on every reply. All the state below
-points at it, and it's saved in the checkpoint, so it survives restarts.
+A request thread's ID is its channel plus the `ts` of its top-level message,
+written `<channel>/<ts>`. The `ts` is what `chat.postMessage` returns for the
+posted message, and what the gateway passes as `thread_ts` on every reply.
+Slack's docs only guarantee a `ts` is unique within one channel or conversation
+([Retrieving messages](https://docs.slack.dev/messaging/retrieving-messages)),
+so the channel is part of the ID. All the state below points at thread IDs,
+and they're saved in the checkpoint, so they survive restarts.
 
 Questions and notifications carry only the run's mission ID. Posts carry the
 mission ID and, optionally, a `thread` key the mission chooses.
@@ -68,26 +71,16 @@ removes saved entries; there's one per request, run and key.
 | State | Maps | Written when | Read when | Why it's needed |
 | ----- | ---- | ------------ | --------- | --------------- |
 | `latest` | the newest event time handled | a question is posted or resolved, and only ever forward | on start, catch-up asks Squadron for questions after it | so a restart posts questions and answers missed while disconnected, and doesn't post earlier ones again |
-| `missionThreads` | mission ID → request thread | `/squadron` starts a run; a run's post finds or opens its thread; an unlinked run's question or notification opens a thread | a run asks a question, posts, or sends a notification | questions and notifications carry only the mission ID, so this is the only way to find the run's thread |
-| `keyThreads` | key → request thread | a post with a `thread` key opens or joins a thread, if that key isn't linked yet | a post from a run that isn't linked yet | a routed, resumed or externally started run has a new mission ID; its key is the only link back to the request |
-| `requests` | request thread → channel, requester, mission line | `/squadron` starts a run (all three); a post or notification opens a thread in its `channel` (channel only) | anything is posted in the thread, and on every `root` rewrite | the thread may live in any channel or a DM, and a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
+| `missionThreads` | mission ID → request thread ID | `/squadron` starts a run; a run's post finds or opens its thread; an unlinked run's question or notification opens a thread | a run asks a question, posts, or sends a notification | questions and notifications carry only the mission ID, so this is the only way to find the run's thread |
+| `keyThreads` | key → request thread ID | a post with a `thread` key opens or joins a thread, if that key isn't linked yet | a post from a run that isn't linked yet | a routed, resumed or externally started run has a new mission ID; its key is the only link back to the request |
+| `requests` | request thread ID → requester, mission line | `/squadron` starts a run | on every `root` rewrite | a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
 | `messages` | tool call ID → posted question (channel, ts) | a question is posted | the same question arrives again; it's answered | stops a replayed question posting twice, and lets the answer edit the question in place. In memory only, so a question posted before a restart isn't edited when it's answered |
 
-Not every thread has a `requests` entry. One is written only when the gateway
-must remember something it can't work out later:
-
-- **The channel**, when the thread may be outside the default channel: a
-  `/squadron` start, or a post or notification that opens the thread in its
-  `channel`. Without it, replies, answer edits and `root` rewrites would be
-  sent to the default channel, where the thread doesn't exist.
-- **The requester and mission line**, for `/squadron` starts. A `root` rewrite
-  replaces the whole message with the mission's content, so the gateway adds
-  these lines back each time. Without the entry they'd be lost on the first
-  rewrite.
-
-A thread with no entry was opened in the default channel by a run not started
-from Slack. Its replies go to the default channel, and its `root` rewrites get
-no gateway lines, since it never had any.
+Only `/squadron` starts have a `requests` entry. A `root` rewrite replaces the
+whole message with the mission's content, so the gateway adds the requester and
+mission lines back each time. Without the entry they'd be lost on the first
+rewrite. A thread opened any other way never had gateway lines, so its
+rewrites get none.
 
 ## Slack IDs
 
