@@ -82,7 +82,8 @@ func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCa
 	}
 
 	if toolCallID, ok := decodeAnswerCustomID(action.ActionID); ok {
-		if _, err := g.client.OpenViewContext(ctx, cb.TriggerID, answerModal(toolCallID)); err != nil {
+		form := answerForm{ToolCallID: toolCallID, MultiSelect: action.Value == multiSelectValue}
+		if _, err := g.client.OpenViewContext(ctx, cb.TriggerID, answerModal(form)); err != nil {
 			log.Printf("open answer modal: %v", err)
 		}
 		return
@@ -146,17 +147,25 @@ const (
 	answerCallbackID = "sq-answer"
 	answerBlockID    = "sq-answer-block"
 	answerActionID   = "sq-answer-text"
+	multiSelectValue = "multi"
 )
 
-// answerModal carries the tool_call_id in private_metadata so the
-// submission resolves exactly the question whose Answer button opened it.
-func answerModal(toolCallID string) slack.ModalViewRequest {
+// answerForm rides in the answer modal's private_metadata so the submission
+// resolves exactly the question whose button opened it, in the shape that
+// question's agent expects.
+type answerForm struct {
+	ToolCallID  string `json:"tool_call_id"`
+	MultiSelect bool   `json:"multi_select,omitempty"`
+}
+
+func answerModal(form answerForm) slack.ModalViewRequest {
 	input := slack.NewPlainTextInputBlockElement(nil, answerActionID)
 	input.Multiline = true
+	metadata, _ := json.Marshal(form)
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
 		CallbackID:      answerCallbackID,
-		PrivateMetadata: toolCallID,
+		PrivateMetadata: string(metadata),
 		Title:           slack.NewTextBlockObject(slack.PlainTextType, "Answer", false, false),
 		Submit:          slack.NewTextBlockObject(slack.PlainTextType, "Send", false, false),
 		Close:           slack.NewTextBlockObject(slack.PlainTextType, "Cancel", false, false),
@@ -168,15 +177,29 @@ func answerModal(toolCallID string) slack.ModalViewRequest {
 	}
 }
 
+// answerFromSubmission reads the typed answer. A multi-select question's
+// agent was told its answer is a JSON array, so a typed answer to one is
+// sent as a one-item array.
 func answerFromSubmission(cb slack.InteractionCallback) (toolCallID, answer string, ok bool) {
-	if cb.View.CallbackID != answerCallbackID || cb.View.PrivateMetadata == "" || cb.View.State == nil {
+	if cb.View.CallbackID != answerCallbackID || cb.View.State == nil {
+		return "", "", false
+	}
+	var form answerForm
+	if json.Unmarshal([]byte(cb.View.PrivateMetadata), &form) != nil || form.ToolCallID == "" {
 		return "", "", false
 	}
 	answer = strings.TrimSpace(cb.View.State.Values[answerBlockID][answerActionID].Value)
 	if answer == "" {
 		return "", "", false
 	}
-	return cb.View.PrivateMetadata, answer, true
+	if form.MultiSelect {
+		encoded, err := json.Marshal([]string{answer})
+		if err != nil {
+			return "", "", false
+		}
+		answer = string(encoded)
+	}
+	return form.ToolCallID, answer, true
 }
 
 // slackResponderID prefers the user's display name when present;

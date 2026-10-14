@@ -150,17 +150,23 @@ input its `value`.
 4. **When it ends**, whatever the run posts last, and any notification from the
    mission's `notification { gateway { … } }` block (`mission_completed`,
    `mission_failed`), arrive in the same thread.
-5. **Follow-up runs** for the same request, e.g. a fix run routed from triage,
-   can join the same thread instead of opening their own. Mission authors set
-   this up; see the [technical reference](docs/technical-reference.md).
+5. **Follow-up runs.** Missions that work on the same request can share a
+   `thread` key (e.g. a ticket key) on their posts. A later run that posts
+   under that key replies in the request's existing thread instead of opening
+   a new top-level message. Its first message has to be that post; see the
+   [technical reference](docs/technical-reference.md).
 
 ## Answering questions
 
 - A question with choices has a button per choice, or a dropdown if it allows
-  several.
+  several. Its **Other…** button opens a text box for an answer that isn't
+  listed.
 - A free-text question has an **Answer** button that opens a text box.
-- Replies typed in the thread aren't read as answers, because a thread can
-  hold several open questions at once.
+- Replies typed in the thread are never read as answers. That's deliberate:
+  the thread can hold discussion and a record of decisions without any of it
+  being taken as an answer, and a reply couldn't say which of several open
+  questions it answers. Answers go only through the buttons, the dropdown or
+  the text box.
 - Once a question is answered, here or anywhere else (e.g. the command center),
   its message is edited: the question is struck through, followed by the answer
   and who gave it.

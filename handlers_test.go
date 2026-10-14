@@ -182,7 +182,7 @@ func TestDecodeInteractionResponseIgnoresAnswerButton(t *testing.T) {
 func TestAnswerFromSubmission(t *testing.T) {
 	cb := slack.InteractionCallback{View: slack.View{
 		CallbackID:      answerCallbackID,
-		PrivateMetadata: "tc-1",
+		PrivateMetadata: `{"tool_call_id":"tc-1"}`,
 		State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{
 			answerBlockID: {answerActionID: {Value: "  use staging  "}},
 		}},
@@ -192,6 +192,11 @@ func TestAnswerFromSubmission(t *testing.T) {
 		t.Errorf("got tc=%q answer=%q ok=%v", tc, answer, ok)
 	}
 
+	cb.View.PrivateMetadata = `{"tool_call_id":"tc-1","multi_select":true}`
+	if _, answer, _ := answerFromSubmission(cb); answer != `["use staging"]` {
+		t.Errorf("a typed answer to a multi-select question must reach the agent as a JSON array, got %q", answer)
+	}
+
 	cb.View.CallbackID = "someone-else"
 	if _, _, ok := answerFromSubmission(cb); ok {
 		t.Error("a submission from another modal must be ignored")
@@ -199,8 +204,8 @@ func TestAnswerFromSubmission(t *testing.T) {
 }
 
 func TestAnswerModalCarriesToolCallID(t *testing.T) {
-	m := answerModal("tc-1")
-	if m.PrivateMetadata != "tc-1" || m.CallbackID != answerCallbackID {
+	m := answerModal(answerForm{ToolCallID: "tc-1", MultiSelect: true})
+	if m.PrivateMetadata != `{"tool_call_id":"tc-1","multi_select":true}` || m.CallbackID != answerCallbackID {
 		t.Errorf("got metadata=%q callback=%q", m.PrivateMetadata, m.CallbackID)
 	}
 }

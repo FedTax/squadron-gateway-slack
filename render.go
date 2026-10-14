@@ -22,16 +22,22 @@ func buildFallbackText(rec gatewaysdk.HumanInputRecord) string {
 //
 // Layout depends on picker shape:
 //   - free-text → section block + an Answer button that opens a modal
-//   - single-choice → section block + actions block of buttons
+//   - single-choice → section block + actions block of buttons, then Other
 //   - multi-select → section block whose accessory is the multi_static_select
 //     element (Slack rejects multi-selects inside actions blocks; they're
-//     only valid as section accessories or in input blocks).
+//     only valid as section accessories or in input blocks), then an
+//     actions block with Other
+//
+// Squadron's ask tool promises the agent that a human can always answer
+// outside the choices, so every choice question gets an Other button that
+// opens the same modal as Answer.
 func buildBlocks(rec gatewaysdk.HumanInputRecord, topLevel bool) []slack.Block {
 	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec, topLevel), false, false)
 
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		return []slack.Block{
 			slack.NewSectionBlock(bodyText, nil, slack.NewAccessory(buildMultiSelect(rec))),
+			slack.NewActionBlock("sq-answer-"+rec.ToolCallID, buildAnswerButton(rec, "Other…")),
 		}
 	}
 
@@ -39,21 +45,26 @@ func buildBlocks(rec gatewaysdk.HumanInputRecord, topLevel bool) []slack.Block {
 	if len(rec.Choices) > 0 {
 		blocks = append(blocks, buildButtonsBlock(rec))
 	} else {
-		blocks = append(blocks, buildAnswerButtonBlock(rec))
+		blocks = append(blocks, slack.NewActionBlock("sq-answer-"+rec.ToolCallID, buildAnswerButton(rec, "Answer")))
 	}
 	return blocks
 }
 
-// buildAnswerButtonBlock opens the answer modal. Free-text answers come from
-// the modal rather than thread replies because a request thread can hold
-// several open questions, and a reply can't say which one it answers.
-func buildAnswerButtonBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
-	btn := slack.NewButtonBlockElement(
+// buildAnswerButton opens the answer modal. Typed answers come from the
+// modal rather than thread replies because a request thread can hold
+// several open questions, and a reply can't say which one it answers. The
+// button's value marks a multi-select question, whose answer must reach the
+// agent as a JSON array like a picked one does.
+func buildAnswerButton(rec gatewaysdk.HumanInputRecord, label string) *slack.ButtonBlockElement {
+	value := ""
+	if rec.MultiSelect {
+		value = multiSelectValue
+	}
+	return slack.NewButtonBlockElement(
 		encodeAnswerCustomID(rec.ToolCallID),
-		"",
-		slack.NewTextBlockObject(slack.PlainTextType, "Answer", false, false),
+		value,
+		slack.NewTextBlockObject(slack.PlainTextType, label, false, false),
 	)
-	return slack.NewActionBlock("sq-answer-"+rec.ToolCallID, btn)
 }
 
 // fallbackThreadTitle is the top-level message for a run that asks before
@@ -142,9 +153,10 @@ const (
 )
 
 func buildButtonsBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
-	elements := make([]slack.BlockElement, 0, len(rec.Choices))
+	elements := make([]slack.BlockElement, 0, len(rec.Choices)+1)
 	for i, choice := range rec.Choices {
-		if i >= maxActionElements {
+		// One element is kept for Other.
+		if i >= maxActionElements-1 {
 			break
 		}
 		label := truncate(choice, maxButtonLabelBytes)
@@ -155,6 +167,7 @@ func buildButtonsBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
 		)
 		elements = append(elements, btn)
 	}
+	elements = append(elements, buildAnswerButton(rec, "Other…"))
 	return slack.NewActionBlock("sq-actions-"+rec.ToolCallID, elements...)
 }
 

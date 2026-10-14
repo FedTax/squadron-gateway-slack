@@ -242,13 +242,17 @@ func TestBuildBlocksSingleSelectUsesButtons(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ActionBlock, got %T", blocks[1])
 	}
-	if got := len(actions.Elements.ElementSet); got != 3 {
-		t.Fatalf("expected 3 buttons, got %d", got)
+	if got := len(actions.Elements.ElementSet); got != 4 {
+		t.Fatalf("expected 3 choice buttons + Other, got %d", got)
 	}
 	for i, el := range actions.Elements.ElementSet {
 		if _, ok := el.(*slack.ButtonBlockElement); !ok {
 			t.Errorf("element %d is %T, want *slack.ButtonBlockElement", i, el)
 		}
+	}
+	other := actions.Elements.ElementSet[3].(*slack.ButtonBlockElement)
+	if tc, ok := decodeAnswerCustomID(other.ActionID); !ok || tc != "tc-1" || other.Value != "" {
+		t.Errorf("last button must be Other, opening the answer modal; got action_id=%q value=%q", other.ActionID, other.Value)
 	}
 }
 
@@ -262,8 +266,12 @@ func TestBuildBlocksMultiSelectIsSectionAccessory(t *testing.T) {
 		Choices:     []string{"A", "B", "C"},
 		MultiSelect: true,
 	}, false)
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block (section with accessory), got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected section with accessory + Other, got %d blocks", len(blocks))
+	}
+	other := blocks[1].(*slack.ActionBlock).Elements.ElementSet[0].(*slack.ButtonBlockElement)
+	if tc, ok := decodeAnswerCustomID(other.ActionID); !ok || tc != "tc-1" || other.Value != multiSelectValue {
+		t.Errorf("Other must open the answer modal marked multi-select; got action_id=%q value=%q", other.ActionID, other.Value)
 	}
 	section, ok := blocks[0].(*slack.SectionBlock)
 	if !ok {
@@ -295,7 +303,7 @@ func TestBuildButtonsBlockCapsAt25Buttons(t *testing.T) {
 	})
 	actions := block.(*slack.ActionBlock)
 	if got := len(actions.Elements.ElementSet); got != maxActionElements {
-		t.Errorf("expected exactly %d buttons (Slack action-element cap), got %d", maxActionElements, got)
+		t.Errorf("expected exactly %d buttons, Other included (Slack action-element cap), got %d", maxActionElements, got)
 	}
 }
 
