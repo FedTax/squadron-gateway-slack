@@ -153,7 +153,8 @@ input its `value`.
 5. **Follow-up runs.** Missions that work on the same request can share a
    `thread` key (e.g. a ticket key) on their posts. A later run that posts
    under that key replies in the request's existing thread instead of opening
-   a new top-level message. Its first message has to be that post; see the
+   a new top-level message. A run that may ask a question before it posts
+   calls `builtins.gateway.link` with the key first; see the
    [technical reference](docs/technical-reference.md).
 
 ## Answering questions

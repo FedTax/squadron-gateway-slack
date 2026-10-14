@@ -50,13 +50,17 @@ mission ID and, optionally, a `thread` key the mission chooses.
 6. **A notification from an unlinked run** posts a new top-level message in
    the `channel` set on the mission's `notification { gateway { … } }` block,
    or the default channel. The run is linked to it.
+7. **`builtins.gateway.link` with a key** (`Link`) posts nothing. If a request
+   is filed under the key, the run is linked to it, even if the run already
+   had a thread. Otherwise, if the run has a thread, the key is filed under
+   it. If neither has one, it returns an error and links nothing.
 
-**What the mission must do:** for a run to join an existing request, its first
-message to the gateway must be a post with that request's `thread` key. A
-question or notification has no key, so if one comes first the gateway can't
-tell which request the run belongs to. It opens a new top-level message for
-the run (case 5 or 6), and the run's later posts stay in that thread (case 2),
-even with the key.
+**What the mission must do:** for a run to join an existing request, it must
+call `builtins.gateway.link` with that request's key, or post with the key as
+its `thread`, before it asks or notifies anything. A question or notification
+carries no key, so if one comes first the gateway can't tell which request the
+run belongs to. It opens a new top-level message for the run (case 5 or 6). A
+later link moves the run to the request, but that message stays where it was.
 
 A question's `short_summary` is shown as its heading only when the question
 itself is top-level. `PostMessageRequest.TaskID` is received but not used.

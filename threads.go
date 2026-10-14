@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	gatewaysdk "github.com/mlund01/squadron-gateway-sdk"
 	"github.com/slack-go/slack"
 )
 
@@ -83,6 +84,27 @@ func (g *slackGateway) rememberKey(key, ts string) {
 	g.keyThreads[key] = ts
 	g.writeCheckpointLocked()
 	g.mu.Unlock()
+}
+
+// Link joins a run to the request filed under key, so a run whose first
+// message is a question or notification still lands in that request instead
+// of opening its own. A key with no request yet is filed under the run's
+// thread, if it has one, the same as a post would.
+func (g *slackGateway) Link(_ context.Context, req gatewaysdk.LinkRequest) error {
+	if req.Key == "" || req.MissionID == "" {
+		return fmt.Errorf("link needs a key and the run's mission id")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if thread := g.keyThreads[req.Key]; thread != "" {
+		g.missionThreads[req.MissionID] = thread
+	} else if thread := g.missionThreads[req.MissionID]; thread != "" {
+		g.keyThreads[req.Key] = thread
+	} else {
+		return fmt.Errorf("no request is filed under %q yet; post with that thread key to open one", req.Key)
+	}
+	g.writeCheckpointLocked()
+	return nil
 }
 
 func (g *slackGateway) threadForKey(key string) string {
