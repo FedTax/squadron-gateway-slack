@@ -37,7 +37,8 @@ post says is up to the mission.
    - The Messages tab settings let you run `/squadron` in a DM with the app.
    - `files:write` is only needed if missions attach files to their posts.
    - Add `channels:read` and `groups:read` only if you set `channel_name`
-     instead of `channel_id`, or missions name a post's `channel` by name.
+     instead of `channel_id`, or missions name a channel by name (in a post or
+     a `notification` block).
 
 2. Create an app-level token with the `connections:write` scope and store it:
 
@@ -53,7 +54,8 @@ post says is up to the mission.
 
 4. Invite the bot to each channel you'll use: `/invite @squadron`.
 
-5. Pick the channel that runs not started from Slack post to, and store its ID:
+5. Pick a default channel and store its ID. A run posts there when it wasn't
+   started from Slack and its mission doesn't name a channel:
 
    ```bash
    squadron vars set slack_channel_id C0123456789
@@ -105,8 +107,8 @@ post says is up to the mission.
 | ----------------- | -------- | ----- |
 | `bot_token`       | yes      | Bot token (`xoxb-…`). Use a `secret` variable. |
 | `app_token`       | yes      | App-level token (`xapp-…`) with `connections:write`. Use a `secret` variable. |
-| `channel_id`      | one of   | Channel ID (e.g. `C0123456789`) for runs not started from Slack. |
-| `channel_name`    | one of   | The same channel by name (e.g. `general`). Looked up at startup, so renaming the channel breaks it. |
+| `channel_id`      | one of   | Default channel ID (e.g. `C0123456789`), for runs not started from Slack whose mission doesn't name a channel. |
+| `channel_name`    | one of   | The default channel by name (e.g. `general`). Looked up at startup, so renaming the channel breaks it. |
 | `checkpoint_path` | optional | Where the gateway saves its state across restarts. Defaults to `./.squadron-slack-gateway.json`. |
 | `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
 | `mcp_token`       | optional | The MCP host's `secret`. Use a `secret` variable. |
@@ -136,14 +138,14 @@ input its `value`.
 - A mission can replace the top-level message's content as the work moves on.
   The mission and requester lines stay on it.
 - A run started another way (the command center, a schedule, a route) posts in
-  the configured channel, unless its first post names a channel of its own.
+  the default channel, unless its first post names a channel of its own.
   Its first post or question becomes its top-level message. Mission authors
   can make such a run join an existing request's thread instead; see the
   [technical reference](docs/technical-reference.md).
 - A mission's `notification { gateway { … } }` block (`mission_completed`,
   `mission_failed` or `all`) posts in the run's thread. A run with no thread
   gets a new top-level message, in the block's `channel` if it sets one,
-  otherwise the configured channel.
+  otherwise the default channel.
 
 ## Answering questions
 
