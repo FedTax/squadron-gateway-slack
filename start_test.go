@@ -228,3 +228,43 @@ func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
 		t.Errorf("a root rewrite must stay in that channel and keep the run and requester lines; got %+v", got)
 	}
 }
+
+func TestDesiredChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
+	type call struct{ channel, threadTS string }
+	var mu sync.Mutex
+	var calls []call
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		c := call{channel: r.PostForm.Get("channel"), threadTS: r.PostForm.Get("thread_ts")}
+		mu.Lock()
+		calls = append(calls, c)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": c.channel, "ts": "1700000000.000003"})
+	}))
+	defer api.Close()
+
+	g := newSlackGateway()
+	g.client = slack.New("xoxb-test", slack.OptionAPIURL(api.URL+"/"), slack.OptionHTTPClient(api.Client()))
+	g.channelID = "CTEST"
+	ctx := context.Background()
+	post := func(missionID, payload string) {
+		t.Helper()
+		if err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: missionID, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	post("run-1", `{"text":"Triaging","thread":"DEV-1","desired_channel":"CSECOND"}`)
+	if got := calls[0]; got != (call{channel: "CSECOND"}) {
+		t.Fatalf("a run with no thread must open it in desired_channel; got %+v", got)
+	}
+	post("run-1", `{"text":"Update"}`)
+	if got := calls[1]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
+		t.Errorf("later posts must follow the thread to its channel; got %+v", got)
+	}
+	post("run-2", `{"text":"Fixing","thread":"DEV-1","desired_channel":"COTHER"}`)
+	if got := calls[2]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
+		t.Errorf("an existing thread must win over desired_channel; got %+v", got)
+	}
+}

@@ -37,7 +37,7 @@ post says is up to the mission.
    - The Messages tab settings let you run `/squadron` in a DM with the app.
    - `files:write` is only needed if missions attach files to their posts.
    - Add `channels:read` and `groups:read` only if you set `channel_name`
-     instead of `channel_id`.
+     instead of `channel_id`, or missions name a `desired_channel` by name.
 
 2. Create an app-level token with the `connections:write` scope and store it:
 
@@ -136,9 +136,10 @@ input its `value`.
 - A mission can replace the top-level message's content as the work moves on.
   The mission and requester lines stay on it.
 - A run started another way (the command center, a schedule, a route) posts in
-  the configured channel. Its first post or question becomes its top-level
-  message. Mission authors can make such a run join an existing request's
-  thread; see the [technical reference](docs/technical-reference.md).
+  the configured channel, unless its first post names a channel of its own.
+  Its first post or question becomes its top-level message. Mission authors
+  can make such a run join an existing request's thread instead; see the
+  [technical reference](docs/technical-reference.md).
 - A mission's `notification` block (`mission_completed`, `mission_failed` or
   `all`) posts in the run's thread. A run with no thread doesn't post
   notifications.

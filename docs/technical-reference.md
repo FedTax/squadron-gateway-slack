@@ -9,6 +9,7 @@
 | `thread`  | string  | Optional key naming the request, e.g. a ticket key. Runs that post under the same key share one thread. |
 | `root`    | boolean | Replace the request's top-level message with this post instead of replying. Posts it if the request has none yet. |
 | `channel` | string  | Optional channel name or ID. The post goes there top-level, and `thread` and `root` are ignored. |
+| `desired_channel` | string | Optional channel name or ID to open the request's thread in. Used only when neither the run nor `thread` is linked to a thread yet; otherwise the existing thread's channel wins. A name needs `channels:read`/`groups:read`, and one that can't be found falls back to the configured channel. |
 
 Files a mission attaches to the post are uploaded into the same thread.
 
@@ -29,8 +30,9 @@ links runs and keys to it:
    that key's thread. Squadron sends the posting run's mission ID with each
    post (`PostMessageRequest.MissionID`), so this is how a routed, resumed or
    externally started run joins an existing request.
-4. **A post with no linked run or key** becomes a new top-level message in the
-   configured channel. Its run and key are linked to it.
+4. **A post with no linked run or key** becomes a new top-level message in
+   `desired_channel`, or the configured channel without one. Its run and key
+   are linked to it.
 5. **A question from an unlinked run** (`HumanInputRecord.MissionID`) posts a
    top-level message of `*<mission>*: <question summary>` in the configured
    channel, links the run to it, and posts the question as its first reply.
@@ -55,11 +57,11 @@ removes saved entries; there's one per request, run and key.
 | `latest` | the newest event time handled | a question is posted or resolved, and only ever forward | on start, catch-up asks Squadron for questions after it | so a restart posts questions and answers missed while disconnected, and doesn't post earlier ones again |
 | `missionThreads` | mission ID → request thread | `/squadron` starts a run; a run's post finds or opens its thread; an unlinked run's question opens a thread | a run asks a question, posts, or sends a notification | questions and notifications carry only the mission ID, so this is the only way to find the run's thread |
 | `keyThreads` | key → request thread | a post with a `thread` key opens or joins a thread, if that key isn't linked yet | a post from a run that isn't linked yet | a routed, resumed or externally started run has a new mission ID; its key is the only link back to the request |
-| `requests` | request thread → channel, requester, mission line | `/squadron` starts a run | anything is posted in the thread, and on every `root` rewrite | the thread may live in any channel or a DM, and a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
+| `requests` | request thread → channel, requester, mission line | `/squadron` starts a run (all three); a post opens a thread in its `desired_channel` (channel only) | anything is posted in the thread, and on every `root` rewrite | the thread may live in any channel or a DM, and a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
 | `messages` | tool call ID → posted question (channel, ts) | a question is posted | the same question arrives again; it's answered | stops a replayed question posting twice, and lets the answer edit the question in place. In memory only, so a question posted before a restart isn't edited when it's answered |
 
-Threads with no `requests` entry (a request started outside `/squadron`) are in
-the configured channel and have no gateway lines.
+Threads with no `requests` entry are in the configured channel. Threads with no
+requester or mission line (not started from `/squadron`) get no gateway lines.
 
 ## Slack IDs
 

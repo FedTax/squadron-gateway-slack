@@ -141,6 +141,7 @@ const slackPostSchema = `{
   "properties": {
     "text": {"type": "string", "description": "Message body (Slack mrkdwn supported). When blocks are set, this is the notification/preview fallback."},
     "channel": {"type": "string", "description": "Optional channel name or id override."},
+    "desired_channel": {"type": "string", "description": "Optional channel name or id to open the request's thread in. Used only when the run and thread key have no thread yet; otherwise the existing thread's channel wins."},
     "thread": {"type": "string", "description": "Optional key naming the request, e.g. its ticket key. Runs that post under the same key share one thread. Ignored when channel is set."},
     "root": {"type": "boolean", "description": "Replace the request's top-level message with this post, or post it when the request has none, instead of replying in its thread."},
     "blocks": {
@@ -153,11 +154,14 @@ const slackPostSchema = `{
 }`
 
 type slackPostPayload struct {
-	Text    string          `json:"text"`
-	Channel string          `json:"channel,omitempty"`
-	Thread  string          `json:"thread,omitempty"`
-	Root    bool            `json:"root,omitempty"`
-	Blocks  json.RawMessage `json:"blocks,omitempty"`
+	Text    string `json:"text"`
+	Channel string `json:"channel,omitempty"`
+	// DesiredChannel only chooses where a new request thread opens; once a
+	// run or key has a thread, its posts must stay in it.
+	DesiredChannel string          `json:"desired_channel,omitempty"`
+	Thread         string          `json:"thread,omitempty"`
+	Root           bool            `json:"root,omitempty"`
+	Blocks         json.RawMessage `json:"blocks,omitempty"`
 }
 
 // postMessage renders a builtins.gateway.post payload (text + mrkdwn, Block
@@ -182,6 +186,8 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		thread = g.threadForPost(req.MissionID, p.Thread)
 		if thread != "" {
 			channel = g.requestChannel(thread)
+		} else if p.DesiredChannel != "" {
+			channel = g.resolveNotifyChannel(ctx, client, p.DesiredChannel, channel)
 		}
 	}
 
@@ -220,7 +226,7 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 			return fmt.Errorf("post message: %w", err)
 		}
 	default:
-		_, ts, err := client.PostMessageContext(ctx, channel, opts...)
+		posted, ts, err := client.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
 			return fmt.Errorf("post message: %w", err)
 		}
@@ -230,6 +236,9 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 			thread = ts
 			g.rememberRun(req.MissionID, ts)
 			g.rememberKey(p.Thread, ts)
+			if p.DesiredChannel != "" {
+				g.rememberRequest(ts, posted, "", "")
+			}
 		}
 	}
 
@@ -269,7 +278,7 @@ func (g *slackGateway) resolveNotifyChannel(ctx context.Context, client *slack.C
 	name := strings.TrimPrefix(override, "#")
 	resolved, err := resolveChannelByName(ctx, client, name)
 	if err != nil {
-		log.Printf("notification channel override %q: %v — falling back to default", override, err)
+		log.Printf("channel %q: %v — posting to the configured channel instead", override, err)
 		return def
 	}
 	return resolved
