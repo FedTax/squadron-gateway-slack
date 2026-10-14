@@ -229,7 +229,7 @@ func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
 	}
 }
 
-func TestDesiredChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
+func TestChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 	type call struct{ channel, threadTS string }
 	var mu sync.Mutex
 	var calls []call
@@ -255,16 +255,16 @@ func TestDesiredChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 		}
 	}
 
-	post("run-1", `{"text":"Triaging","thread":"DEV-1","desired_channel":"CSECOND"}`)
+	post("run-1", `{"text":"Triaging","thread":"DEV-1","channel":"CSECOND"}`)
 	if got := calls[0]; got != (call{channel: "CSECOND"}) {
-		t.Fatalf("a run with no thread must open it in desired_channel; got %+v", got)
+		t.Fatalf("a run with no thread must open it in channel; got %+v", got)
 	}
 	post("run-1", `{"text":"Update"}`)
 	if got := calls[1]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
 		t.Errorf("later posts must follow the thread to its channel; got %+v", got)
 	}
-	post("run-2", `{"text":"Fixing","thread":"DEV-1","desired_channel":"COTHER"}`)
+	post("run-2", `{"text":"Fixing","thread":"DEV-1","channel":"COTHER"}`)
 	if got := calls[2]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
-		t.Errorf("an existing thread must win over desired_channel; got %+v", got)
+		t.Errorf("an existing thread must win over channel; got %+v", got)
 	}
 }

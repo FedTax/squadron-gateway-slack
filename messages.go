@@ -125,8 +125,8 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 // MessageToolSpec so the LLM knows how to format a Slack post.
 const slackPostDescription = "Post a Slack message. " +
 	"`text` is the message body and supports Slack mrkdwn (*bold*, _italics_, `code`, > quotes, <url|label> links). " +
-	"`channel` optionally overrides the destination — a channel name (with or without a leading #) or id. " +
 	"`thread` is a key naming the request (e.g. its ticket key): the post replies in that request's thread, or becomes its top-level message when there is none yet. Set `root` to replace the request's top-level message with this post instead of replying. " +
+	"`channel` optionally picks where a new request's top-level message goes — a channel name (with or without a leading #) or id. Once the run or key has a thread, posts stay in it. " +
 	"`blocks` is an optional Slack Block Kit array for rich layout; each element is a block object with a `type`. Common types: " +
 	"`header` = {\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"...\"}}; " +
 	"`section` = {\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"...\"}} (or use \"fields\":[{\"type\":\"mrkdwn\",\"text\":\"...\"}] for a two-column grid); " +
@@ -140,9 +140,8 @@ const slackPostSchema = `{
   "type": "object",
   "properties": {
     "text": {"type": "string", "description": "Message body (Slack mrkdwn supported). When blocks are set, this is the notification/preview fallback."},
-    "channel": {"type": "string", "description": "Optional channel name or id override."},
-    "desired_channel": {"type": "string", "description": "Optional channel name or id to open the request's thread in. Used only when the run and thread key have no thread yet; otherwise the existing thread's channel wins."},
-    "thread": {"type": "string", "description": "Optional key naming the request, e.g. its ticket key. Runs that post under the same key share one thread. Ignored when channel is set."},
+    "channel": {"type": "string", "description": "Optional channel name or id to open the request's thread in. Used only when the run and thread key have no thread yet; otherwise the post goes in the existing thread."},
+    "thread": {"type": "string", "description": "Optional key naming the request, e.g. its ticket key. Runs that post under the same key share one thread."},
     "root": {"type": "boolean", "description": "Replace the request's top-level message with this post, or post it when the request has none, instead of replying in its thread."},
     "blocks": {
       "type": "array",
@@ -154,19 +153,19 @@ const slackPostSchema = `{
 }`
 
 type slackPostPayload struct {
-	Text    string `json:"text"`
-	Channel string `json:"channel,omitempty"`
-	// DesiredChannel only chooses where a new request thread opens; once a
-	// run or key has a thread, its posts must stay in it.
-	DesiredChannel string          `json:"desired_channel,omitempty"`
-	Thread         string          `json:"thread,omitempty"`
-	Root           bool            `json:"root,omitempty"`
-	Blocks         json.RawMessage `json:"blocks,omitempty"`
+	Text string `json:"text"`
+	// Channel only chooses where a new request thread opens; once a run or
+	// key has a thread, its posts must stay in it.
+	Channel string          `json:"channel,omitempty"`
+	Thread  string          `json:"thread,omitempty"`
+	Root    bool            `json:"root,omitempty"`
+	Blocks  json.RawMessage `json:"blocks,omitempty"`
 }
 
 // postMessage renders a builtins.gateway.post payload (text + mrkdwn, Block
-// Kit blocks) plus squadron-supplied file attachments and posts it, honoring
-// an optional channel override (falling back to the configured default channel).
+// Kit blocks) plus squadron-supplied file attachments and posts it in the
+// request's thread, or opens that thread in the post's channel (falling back
+// to the configured default channel).
 func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) error {
 	var p slackPostPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
@@ -179,16 +178,11 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	if client == nil {
 		return fmt.Errorf("slack client not initialized")
 	}
-	var thread string
-	if p.Channel != "" {
+	thread := g.threadForPost(req.MissionID, p.Thread)
+	if thread != "" {
+		channel = g.requestChannel(thread)
+	} else if p.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
-	} else {
-		thread = g.threadForPost(req.MissionID, p.Thread)
-		if thread != "" {
-			channel = g.requestChannel(thread)
-		} else if p.DesiredChannel != "" {
-			channel = g.resolveNotifyChannel(ctx, client, p.DesiredChannel, channel)
-		}
 	}
 
 	text := p.Text
@@ -215,7 +209,7 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	}
 
 	switch {
-	case p.Root && p.Channel == "" && thread != "":
+	case p.Root && thread != "":
 		// The top-level message is rewritten in place, so it always reads as
 		// the request's current state rather than its first.
 		if _, _, _, err := client.UpdateMessageContext(ctx, channel, thread, opts...); err != nil {
@@ -232,13 +226,11 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		}
 		// A request with no thread yet takes this post as its one
 		// top-level message.
-		if p.Channel == "" {
-			thread = ts
-			g.rememberRun(req.MissionID, ts)
-			g.rememberKey(p.Thread, ts)
-			if p.DesiredChannel != "" {
-				g.rememberRequest(ts, posted, "", "")
-			}
+		thread = ts
+		g.rememberRun(req.MissionID, ts)
+		g.rememberKey(p.Thread, ts)
+		if p.Channel != "" {
+			g.rememberRequest(ts, posted, "", "")
 		}
 	}
 

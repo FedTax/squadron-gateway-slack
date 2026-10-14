@@ -37,7 +37,7 @@ post says is up to the mission.
    - The Messages tab settings let you run `/squadron` in a DM with the app.
    - `files:write` is only needed if missions attach files to their posts.
    - Add `channels:read` and `groups:read` only if you set `channel_name`
-     instead of `channel_id`, or missions name a `desired_channel` by name.
+     instead of `channel_id`, or missions name a post's `channel` by name.
 
 2. Create an app-level token with the `connections:write` scope and store it:
 
