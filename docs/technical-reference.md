@@ -35,8 +35,10 @@ links runs and keys to it:
 5. **A question from an unlinked run** (`HumanInputRecord.MissionID`) posts a
    top-level message of `*<mission>*: <question summary>` in the configured
    channel, links the run to it, and posts the question as its first reply.
-6. **A notification** posts in its run's thread, and is dropped if the run has
-   none. A notification with its own `channel` posts top-level there.
+6. **A notification** posts in its run's thread. If the run has none, it
+   becomes a new top-level message in the `channel` set on the mission's
+   `notification { gateway { … } }` block, or the configured channel without
+   one, and the run is linked to it.
 
 A run must therefore post under its key before it asks anything, or its
 question opens a second top-level message (case 5).
@@ -54,9 +56,9 @@ removes saved entries; there's one per request, run and key.
 | State | Maps | Written when | Read when | Why it's needed |
 | ----- | ---- | ------------ | --------- | --------------- |
 | `latest` | the newest event time handled | a question is posted or resolved, and only ever forward | on start, catch-up asks Squadron for questions after it | so a restart posts questions and answers missed while disconnected, and doesn't post earlier ones again |
-| `missionThreads` | mission ID → request thread | `/squadron` starts a run; a run's post finds or opens its thread; an unlinked run's question opens a thread | a run asks a question, posts, or sends a notification | questions and notifications carry only the mission ID, so this is the only way to find the run's thread |
+| `missionThreads` | mission ID → request thread | `/squadron` starts a run; a run's post finds or opens its thread; an unlinked run's question or notification opens a thread | a run asks a question, posts, or sends a notification | questions and notifications carry only the mission ID, so this is the only way to find the run's thread |
 | `keyThreads` | key → request thread | a post with a `thread` key opens or joins a thread, if that key isn't linked yet | a post from a run that isn't linked yet | a routed, resumed or externally started run has a new mission ID; its key is the only link back to the request |
-| `requests` | request thread → channel, requester, mission line | `/squadron` starts a run (all three); a post opens a thread in its `channel` (channel only) | anything is posted in the thread, and on every `root` rewrite | the thread may live in any channel or a DM, and a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
+| `requests` | request thread → channel, requester, mission line | `/squadron` starts a run (all three); a post or notification opens a thread in its `channel` (channel only) | anything is posted in the thread, and on every `root` rewrite | the thread may live in any channel or a DM, and a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
 | `messages` | tool call ID → posted question (channel, ts) | a question is posted | the same question arrives again; it's answered | stops a replayed question posting twice, and lets the answer edit the question in place. In memory only, so a question posted before a restart isn't edited when it's answered |
 
 Threads with no `requests` entry are in the configured channel. Threads with no

@@ -76,9 +76,10 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 	return nil
 }
 
-// postNotification posts a one-way mission-lifecycle notification. No
-// idempotency map — there is nothing to track or edit. A per-mission channel
-// override is resolved here, falling back to the configured default channel.
+// postNotification posts a one-way mission-lifecycle notification in the
+// run's thread, or opens that thread in the notification's channel (falling
+// back to the configured default channel). No idempotency map — there is
+// nothing to track or edit.
 func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.NotificationRecord) error {
 	g.mu.Lock()
 	client := g.client
@@ -88,18 +89,11 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 		return fmt.Errorf("slack client not initialized")
 	}
 	body := buildNotificationBody(rec)
-	var thread string
-	if rec.Channel != "" {
-		channel = g.resolveNotifyChannel(ctx, client, rec.Channel, channel)
-	} else {
-		// A per-mission channel override posts top-level there instead.
-		// A run with no request thread stays silent, so its failure can't
-		// add a second top-level message for the request.
-		thread = g.threadForMission(rec.MissionID)
-		if thread == "" {
-			return nil
-		}
+	thread := g.threadForMission(rec.MissionID)
+	if thread != "" {
 		channel = g.requestChannel(thread)
+	} else if rec.Channel != "" {
+		channel = g.resolveNotifyChannel(ctx, client, rec.Channel, channel)
 	}
 
 	blocks := []slack.Block{
@@ -115,8 +109,15 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	if thread != "" {
 		opts = append(opts, slack.MsgOptionTS(thread))
 	}
-	if _, _, err := client.PostMessageContext(ctx, channel, opts...); err != nil {
+	posted, ts, err := client.PostMessageContext(ctx, channel, opts...)
+	if err != nil {
 		return fmt.Errorf("post notification: %w", err)
+	}
+	if thread == "" {
+		g.rememberRun(rec.MissionID, ts)
+		if rec.Channel != "" {
+			g.rememberRequest(ts, posted, "", "")
+		}
 	}
 	return nil
 }

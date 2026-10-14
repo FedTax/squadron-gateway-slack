@@ -140,9 +140,10 @@ input its `value`.
   Its first post or question becomes its top-level message. Mission authors
   can make such a run join an existing request's thread instead; see the
   [technical reference](docs/technical-reference.md).
-- A mission's `notification` block (`mission_completed`, `mission_failed` or
-  `all`) posts in the run's thread. A run with no thread doesn't post
-  notifications.
+- A mission's `notification { gateway { … } }` block (`mission_completed`,
+  `mission_failed` or `all`) posts in the run's thread. A run with no thread
+  gets a new top-level message, in the block's `channel` if it sets one,
+  otherwise the configured channel.
 
 ## Answering questions
 

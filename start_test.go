@@ -268,3 +268,43 @@ func TestChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 		t.Errorf("an existing thread must win over channel; got %+v", got)
 	}
 }
+
+func TestNotificationUsesThreadElseOpensItInItsChannel(t *testing.T) {
+	type call struct{ channel, threadTS string }
+	var mu sync.Mutex
+	var calls []call
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		c := call{channel: r.PostForm.Get("channel"), threadTS: r.PostForm.Get("thread_ts")}
+		mu.Lock()
+		calls = append(calls, c)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": c.channel, "ts": "1700000000.000004"})
+	}))
+	defer api.Close()
+
+	g := newSlackGateway()
+	g.client = slack.New("xoxb-test", slack.OptionAPIURL(api.URL+"/"), slack.OptionHTTPClient(api.Client()))
+	g.channelID = "CTEST"
+	ctx := context.Background()
+	notify := func(missionID, channel string) {
+		t.Helper()
+		if err := g.postNotification(ctx, gatewaysdk.NotificationRecord{MissionID: missionID, Event: "mission_failed", Channel: channel}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	notify("run-1", "CSECOND")
+	if got := calls[0]; got != (call{channel: "CSECOND"}) {
+		t.Fatalf("a run with no thread must open it in the notification's channel; got %+v", got)
+	}
+	notify("run-1", "COTHER")
+	if got := calls[1]; got != (call{channel: "CSECOND", threadTS: "1700000000.000004"}) {
+		t.Errorf("an existing thread must win over the notification's channel; got %+v", got)
+	}
+	notify("run-2", "")
+	if got := calls[2]; got != (call{channel: "CTEST"}) {
+		t.Errorf("with no thread and no channel it must open the thread in the configured channel; got %+v", got)
+	}
+}
