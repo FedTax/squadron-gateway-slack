@@ -128,26 +128,31 @@ post says is up to the mission.
 A mission started from Slack only works if its config gives every protected
 input its `value`.
 
-## The request message and its thread
+## A request from start to finish
 
-- Running `/squadron` posts a top-level message in the channel or DM you ran it
-  in. The gateway puts two lines on it:
-  - the mission name, linked to the run if `run_url` is set (otherwise the name
-    and the run id);
-  - `Requester: @you`.
-- Everything the run sends afterwards is a reply in that message's thread: its
-  posts, its questions and its notifications.
-- A mission can replace the top-level message's content as the work moves on.
-  The gateway keeps its two lines on it.
-- A run not started from Slack (the command center, a schedule, a route) opens
-  its own top-level message with its first post or question. That message goes
-  in the channel the post names, or in the default channel if it names none.
-  Mission authors can instead have the run join an existing request's thread;
-  see the [technical reference](docs/technical-reference.md).
-- A mission's `notification { gateway { … } }` block (`mission_completed`,
-  `mission_failed` or `all`) posts in the run's thread. If the run has no
-  thread yet, the notification opens one, in the block's `channel` if it sets
-  one, otherwise in the default channel.
+1. **It starts.**
+   - From Slack: you run `/squadron` (see [Starting a mission](#starting-a-mission)).
+     The top-level message is posted right away, in the channel or DM you ran
+     it in.
+   - From Squadron (the command center, a schedule, a route): nothing is posted
+     until the run first sends something. That first message becomes the
+     top-level message. It goes in the channel the mission names, or in the
+     default channel if it names none. A question can't name a channel, so a
+     run whose first message is a question opens in the default channel.
+2. **The top-level message.** For a `/squadron` start, the gateway puts two
+   lines on it: the mission name, linked to the run if `run_url` is set
+   (otherwise the name and run id), and `Requester: @you`. For a start in
+   Squadron, it's the run's first message. As the work moves on, the mission
+   can replace the message's content. The gateway keeps its lines on it.
+3. **While it runs**, the run's posts and questions are replies in that
+   message's thread. Answer questions there (see
+   [Answering questions](#answering-questions)).
+4. **When it ends**, whatever the run posts last, and any notification from the
+   mission's `notification { gateway { … } }` block (`mission_completed`,
+   `mission_failed`), arrive in the same thread.
+5. **Follow-up runs** for the same request, e.g. a fix run routed from triage,
+   can join the same thread instead of opening their own. Mission authors set
+   this up; see the [technical reference](docs/technical-reference.md).
 
 ## Answering questions
 
