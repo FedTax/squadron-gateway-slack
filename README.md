@@ -130,22 +130,24 @@ input its `value`.
 
 ## The request message and its thread
 
-- Starting a mission posts its top-level message where you ran `/squadron`: the
-  mission name (linked to the run when `run_url` is set, otherwise with its run
-  id) and `Requester: @you`.
-- Everything the run sends afterwards is a reply in that thread: its posts, its
-  questions, and its notifications.
+- Running `/squadron` posts a top-level message in the channel or DM you ran it
+  in. The gateway puts two lines on it:
+  - the mission name, linked to the run if `run_url` is set (otherwise the name
+    and the run id);
+  - `Requester: @you`.
+- Everything the run sends afterwards is a reply in that message's thread: its
+  posts, its questions and its notifications.
 - A mission can replace the top-level message's content as the work moves on.
-  The mission and requester lines stay on it.
-- A run started another way (the command center, a schedule, a route) posts in
-  the default channel, unless its first post names a channel of its own.
-  Its first post or question becomes its top-level message. Mission authors
-  can make such a run join an existing request's thread instead; see the
-  [technical reference](docs/technical-reference.md).
+  The gateway keeps its two lines on it.
+- A run not started from Slack (the command center, a schedule, a route) opens
+  its own top-level message with its first post or question. That message goes
+  in the channel the post names, or in the default channel if it names none.
+  Mission authors can instead have the run join an existing request's thread;
+  see the [technical reference](docs/technical-reference.md).
 - A mission's `notification { gateway { … } }` block (`mission_completed`,
-  `mission_failed` or `all`) posts in the run's thread. A run with no thread
-  gets a new top-level message, in the block's `channel` if it sets one,
-  otherwise the default channel.
+  `mission_failed` or `all`) posts in the run's thread. If the run has no
+  thread yet, the notification opens one, in the block's `channel` if it sets
+  one, otherwise in the default channel.
 
 ## Answering questions
 
