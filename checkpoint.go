@@ -10,8 +10,8 @@ import (
 // Checkpoint = what a restart needs to pick up where it left off: the
 // latest event timestamp processed, so catch-up replays only what it
 // missed, plus the request threads, so a restarted gateway keeps posting
-// each run and thread key into the thread it started in and tagging its
-// requester.
+// each run and thread key into the thread it started in, in that thread's
+// channel, with its requester and mission lines.
 // Lost or corrupt files fall back to empty (replay everything in
 // squadron's recent window; missions are looked up again through MCP).
 
@@ -21,14 +21,8 @@ type checkpoint struct {
 	MissionThreads map[string]string `json:"mission_threads,omitempty"`
 	// KeyThreads maps rendered thread key → request thread ts.
 	KeyThreads map[string]string `json:"key_threads,omitempty"`
-	// Requesters maps request thread ts → Slack user id of who started it.
-	Requesters map[string]string `json:"requesters,omitempty"`
-	// MissionLines maps request thread ts → the line naming the run it
-	// started.
-	MissionLines map[string]string `json:"mission_lines,omitempty"`
-	// ThreadChannels maps request thread ts → channel, for requests
-	// started outside the configured channel.
-	ThreadChannels map[string]string `json:"thread_channels,omitempty"`
+	// Requests maps request thread ts → the /squadron start it holds.
+	Requests map[string]request `json:"requests,omitempty"`
 }
 
 func (g *slackGateway) readCheckpoint() checkpoint {
@@ -59,14 +53,8 @@ func (g *slackGateway) loadCheckpoint() {
 	for key, ts := range cp.KeyThreads {
 		g.keyThreads[key] = ts
 	}
-	for ts, user := range cp.Requesters {
-		g.requesters[ts] = user
-	}
-	for ts, line := range cp.MissionLines {
-		g.missionLines[ts] = line
-	}
-	for ts, channel := range cp.ThreadChannels {
-		g.threadChannels[ts] = channel
+	for ts, req := range cp.Requests {
+		g.requests[ts] = req
 	}
 }
 
@@ -93,9 +81,7 @@ func (g *slackGateway) writeCheckpointLocked() {
 		Latest:         g.latest,
 		MissionThreads: g.missionThreads,
 		KeyThreads:     g.keyThreads,
-		Requesters:     g.requesters,
-		MissionLines:   g.missionLines,
-		ThreadChannels: g.threadChannels,
+		Requests:       g.requests,
 	})
 	if err != nil {
 		return

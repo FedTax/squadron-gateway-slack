@@ -27,14 +27,11 @@ type slackGateway struct {
 	messages map[string]postedMessage
 
 	// mission id → request thread ts, thread key → request thread ts, and
-	// per request thread ts its requester, the run it started, and its
-	// channel when that isn't the configured one. Persisted in the
+	// request thread ts → the request started there. Persisted in the
 	// checkpoint; see threads.go.
 	missionThreads map[string]string
 	keyThreads     map[string]string
-	requesters     map[string]string
-	missionLines   map[string]string
-	threadChannels map[string]string
+	requests       map[string]request
 
 	// run_url: the run page link template, with {mission_id}.
 	runURL string
@@ -56,9 +53,7 @@ func newSlackGateway() *slackGateway {
 		messages:       map[string]postedMessage{},
 		missionThreads: map[string]string{},
 		keyThreads:     map[string]string{},
-		requesters:     map[string]string{},
-		missionLines:   map[string]string{},
-		threadChannels: map[string]string{},
+		requests:       map[string]request{},
 	}
 }
 

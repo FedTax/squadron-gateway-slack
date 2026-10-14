@@ -76,8 +76,8 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	if cp.KeyThreads["DEV-123"] != "1700000000.000100" {
 		t.Errorf("key thread not persisted: %+v", cp.KeyThreads)
 	}
-	if cp.Requesters["1700000000.000100"] != "U1" {
-		t.Errorf("requester not persisted: %+v", cp.Requesters)
+	if cp.Requests["1700000000.000100"].Requester != "U1" {
+		t.Errorf("requester not persisted: %+v", cp.Requests)
 	}
 	if got := g.requestLines("1700000000.000100"); got != "*rate_triage*\nRequester: <@U1>" {
 		t.Errorf("requesterLine: got %q", got)

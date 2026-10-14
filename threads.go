@@ -90,16 +90,18 @@ func (g *slackGateway) threadForKey(key string) string {
 	return g.keyThreads[key]
 }
 
-// rememberRequest records who started a request, the run it started and,
-// when it lives outside the configured channel, where, so its posts after a
-// restart still reach it.
+// request is a /squadron start, filed under its top-level message's ts.
+// Its channel is where every later post for the request must go, and its
+// requester and mission line are put back on each root rewrite.
+type request struct {
+	Channel     string `json:"channel"`
+	Requester   string `json:"requester"`
+	MissionLine string `json:"mission_line"`
+}
+
 func (g *slackGateway) rememberRequest(ts, channel, userID, missionLine string) {
 	g.mu.Lock()
-	g.requesters[ts] = userID
-	g.missionLines[ts] = missionLine
-	if channel != g.channelID {
-		g.threadChannels[ts] = channel
-	}
+	g.requests[ts] = request{Channel: channel, Requester: userID, MissionLine: missionLine}
 	g.writeCheckpointLocked()
 	g.mu.Unlock()
 }
@@ -110,7 +112,7 @@ func (g *slackGateway) rememberRequest(ts, channel, userID, missionLine string) 
 func (g *slackGateway) requestChannel(ts string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if channel := g.threadChannels[ts]; channel != "" {
+	if channel := g.requests[ts].Channel; channel != "" {
 		return channel
 	}
 	return g.channelID
@@ -121,9 +123,9 @@ func (g *slackGateway) requestChannel(ts string) string {
 // message doesn't know either, so they're put back on every rewrite.
 func (g *slackGateway) requestLines(ts string) string {
 	g.mu.Lock()
-	user := g.requesters[ts]
-	run := g.missionLines[ts]
+	req := g.requests[ts]
 	g.mu.Unlock()
+	run, user := req.MissionLine, req.Requester
 	var lines []string
 	if run != "" {
 		lines = append(lines, run)

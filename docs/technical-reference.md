@@ -43,17 +43,23 @@ question opens a second top-level message (case 5).
 A question's `short_summary` is shown as its heading only when the question
 itself is top-level. `PostMessageRequest.TaskID` is received but not used.
 
-## Saved state
+## State
 
-The checkpoint file (`checkpoint_path`) holds:
+The gateway keeps five pieces of state. All except `messages` are saved in the
+checkpoint file (`checkpoint_path`) whenever they change, and loaded when the
+gateway starts. A missing or unreadable file starts everything empty. Nothing
+removes saved entries; there's one per request, run and key.
 
-- `latest`: the newest event timestamp processed. On restart the gateway asks
-  Squadron for events after it, so nothing missed while disconnected is lost.
-- mission ID → request thread, and key → request thread.
-- per request thread: the requester, the mission line, and its channel when
-  that isn't the configured one (another channel, or a DM).
+| State | Maps | Written when | Read when | Why it's needed |
+| ----- | ---- | ------------ | --------- | --------------- |
+| `latest` | the newest event time handled | a question is posted or resolved, and only ever forward | on start, catch-up asks Squadron for questions after it | so a restart posts questions and answers missed while disconnected, and doesn't post earlier ones again |
+| `missionThreads` | mission ID → request thread | `/squadron` starts a run; a run's post finds or opens its thread; an unlinked run's question opens a thread | a run asks a question, posts, or sends a notification | questions and notifications carry only the mission ID, so this is the only way to find the run's thread |
+| `keyThreads` | key → request thread | a post with a `thread` key opens or joins a thread, if that key isn't linked yet | a post from a run that isn't linked yet | a routed, resumed or externally started run has a new mission ID; its key is the only link back to the request |
+| `requests` | request thread → channel, requester, mission line | `/squadron` starts a run | anything is posted in the thread, and on every `root` rewrite | the thread may live in any channel or a DM, and a mission rewriting the top-level message doesn't know the gateway's own lines, so they're put back each time |
+| `messages` | tool call ID → posted question (channel, ts) | a question is posted | the same question arrives again; it's answered | stops a replayed question posting twice, and lets the answer edit the question in place. In memory only, so a question posted before a restart isn't edited when it's answered |
 
-A missing or unreadable file starts empty.
+Threads with no `requests` entry (a request started outside `/squadron`) are in
+the configured channel and have no gateway lines.
 
 ## Slack IDs
 
