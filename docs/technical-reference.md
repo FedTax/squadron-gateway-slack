@@ -25,6 +25,9 @@ conversation, so the ID carries the channel too.
 
 `id` is an ID a post returned. `text` and `blocks` are as for a post and
 replace the whole message, through `chat.update` on that channel and `ts`.
+`attachments` are as for a post: the files are uploaded into the run's
+thread, or under the edited message if the run has none. They're added; files
+posted earlier stay.
 
 - **The request's top-level message:** a `/squadron` start's mission and
   requester lines are added back, as on a `root` post.

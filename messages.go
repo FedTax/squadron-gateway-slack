@@ -238,7 +238,7 @@ func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessa
 		return fmt.Errorf("parse message payload: %w", err)
 	}
 	if p.Thread != "" || p.Channel != "" || p.Root {
-		return fmt.Errorf("an edit changes only text and blocks; thread, channel and root apply to posts")
+		return fmt.Errorf("an edit changes only text, blocks and attachments; thread, channel and root apply to posts")
 	}
 	channel, ts := splitThreadID(req.MessageID)
 	if channel == "" || ts == "" {
@@ -261,6 +261,15 @@ func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessa
 	opts := messageOptions(p.Text, p.Blocks, g.requestLines(req.MessageID))
 	if _, _, _, err := client.UpdateMessageContext(ctx, channel, ts, opts...); err != nil {
 		return fmt.Errorf("edit message: %w", err)
+	}
+	// An edit's files land where a post's would, in the run's thread, so they
+	// stay with the request rather than starting a new top-level message.
+	fileChannel, fileThread := channel, ts
+	if thread := g.threadForMission(req.MissionID); thread != "" {
+		fileChannel, fileThread = splitThreadID(thread)
+	}
+	for _, a := range req.Attachments {
+		g.uploadAttachment(ctx, client, fileChannel, fileThread, a)
 	}
 	return nil
 }

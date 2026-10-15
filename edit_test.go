@@ -21,6 +21,7 @@ func editTestGateway(t *testing.T) (*slackGateway, func() []recordedCall) {
 	t.Helper()
 	var mu sync.Mutex
 	var calls []recordedCall
+	var apiURL string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		c := recordedCall{
@@ -30,6 +31,13 @@ func editTestGateway(t *testing.T) (*slackGateway, func() []recordedCall) {
 			threadTS: r.PostForm.Get("thread_ts"),
 			text:     r.PostForm.Get("text"),
 		}
+		if c.method == "upload" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if c.channel == "" {
+			c.channel = r.PostForm.Get("channel_id")
+		}
 		mu.Lock()
 		if c.ts == "" {
 			c.ts = "1700000000.00000" + string(rune('1'+len(calls)))
@@ -37,8 +45,9 @@ func editTestGateway(t *testing.T) (*slackGateway, func() []recordedCall) {
 		calls = append(calls, c)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": c.channel, "ts": c.ts})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": c.channel, "ts": c.ts, "upload_url": apiURL + "/upload", "file_id": "F1"})
 	}))
+	apiURL = api.URL
 	t.Cleanup(api.Close)
 	g := newSlackGateway()
 	g.client = slack.New("xoxb-test", slack.OptionAPIURL(api.URL+"/"), slack.OptionHTTPClient(api.Client()))
@@ -91,6 +100,39 @@ func TestEditUpdatesTheMessageTheIDNames(t *testing.T) {
 	got := calls()[2]
 	if want := (recordedCall{method: "chat.update", channel: "CTEST", ts: "1700000000.000002", text: "Checked CO: rate differs"}); got != want {
 		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestEditUploadsItsAttachmentsIntoTheRunsThread(t *testing.T) {
+	g, calls := editTestGateway(t)
+	ctx := context.Background()
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: `{"text":"Triaging","thread":"DEV-1"}`}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: `{"text":"Checking CO"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{
+		MissionID:   "run-1",
+		MessageID:   reply,
+		Payload:     `{"text":"Checked CO: rate differs"}`,
+		Attachments: []gatewaysdk.FileAttachment{{Filename: "co.csv", MimeType: "text/csv", Content: []byte("a,b")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var completed *recordedCall
+	for _, c := range calls() {
+		if c.method == "files.completeUploadExternal" {
+			completed = &c
+		}
+	}
+	if completed == nil {
+		t.Fatal("the edit's attachment was never uploaded")
+	}
+	if completed.channel != "CTEST" || completed.threadTS != "1700000000.000001" {
+		t.Errorf("an edit's file must go in the run's thread; got channel %q thread %q", completed.channel, completed.threadTS)
 	}
 }
 
