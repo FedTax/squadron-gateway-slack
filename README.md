@@ -145,7 +145,8 @@ input its `value`.
    Squadron, it's the run's first message. As the work moves on, the mission
    can replace the message's content. The gateway keeps its lines on it.
 3. **While it runs**, the run's posts and questions are replies in that
-   message's thread. Answer questions there (see
+   message's thread. The mission can edit any of its own posts later, e.g. to
+   tick off a step, but not a question. Answer questions there (see
    [Answering questions](#answering-questions)).
 4. **When it ends**, whatever the run posts last, and any notification from the
    mission's `notification { gateway { … } }` block (`mission_completed`,

@@ -16,6 +16,25 @@ On a `root` post the gateway appends its own lines after `text`: the mission
 line and `Requester: <@user>`, for requests started from `/squadron`. With
 `blocks`, they're added as a final `context` block.
 
+Every post returns the ID of the message it created or replaced, as
+`<channel>/<ts>`: the new top-level message, the reply, or the rewritten
+top-level message. Slack only guarantees a `ts` is unique within one
+conversation, so the ID carries the channel too.
+
+## `builtins.gateway.edit` payload
+
+`id` is an ID a post returned. `text` and `blocks` are as for a post and
+replace the whole message, through `chat.update` on that channel and `ts`.
+
+- **The request's top-level message:** a `/squadron` start's mission and
+  requester lines are added back, as on a `root` post.
+- **Refused:** a question's message, because the gateway rewrites it itself
+  when it's answered; a payload with `thread`, `channel` or `root`, because an
+  edit can't move a message; and an ID that isn't `<channel>/<ts>`.
+- **Not kept:** the gateway doesn't store post IDs. A later run that needs to
+  edit a message has to be given its ID, e.g. from a memory file the mission
+  writes it to.
+
 ## How a run finds its thread
 
 A request thread's ID is its channel plus the `ts` of its top-level message,
@@ -128,7 +147,8 @@ SQUADRON_SLACK_PREVIEW="$PWD/slack-calls.json" \
 ```
 
 The output records outgoing API payloads for externally started and slash-command
-started cases, including root edits, threaded replies, questions, failures, and
+started cases, including root edits, threaded replies, edits by ID (and a
+refused edit of a question), questions, failures, and
 checkpoint reload. No Slack app or model is contacted. The JSON `checks` report
 whether the cases kept one thread. A passing walkthrough means the capture
 completed; false checks remain visible as behavior to investigate. The recorder

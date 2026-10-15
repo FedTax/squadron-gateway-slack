@@ -126,6 +126,7 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 const slackPostDescription = "Post a Slack message. " +
 	"`text` is the message body and supports Slack mrkdwn (*bold*, _italics_, `code`, > quotes, <url|label> links). " +
 	"`thread` is a key naming the request (e.g. its ticket key): the post replies in that request's thread, or becomes its top-level message when there is none yet. Set `root` to replace the request's top-level message with this post instead of replying. " +
+	"The result gives the message's id, which builtins.gateway.edit takes to change it later. " +
 	"`channel` optionally picks where a new request's top-level message goes — a channel name (with or without a leading #) or id. Once the run or key has a thread, posts stay in it. " +
 	"`blocks` is an optional Slack Block Kit array for rich layout; each element is a block object with a `type`. Common types: " +
 	"`header` = {\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"...\"}}; " +
@@ -165,18 +166,19 @@ type slackPostPayload struct {
 // postMessage renders a builtins.gateway.post payload (text + mrkdwn, Block
 // Kit blocks) plus squadron-supplied file attachments and posts it in the
 // request's thread, or opens that thread in the post's channel (falling back
-// to the configured default channel).
-func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) error {
+// to the configured default channel). It returns the ID of the message the
+// post created or replaced, for builtins.gateway.edit.
+func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) (string, error) {
 	var p slackPostPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
-		return fmt.Errorf("parse message payload: %w", err)
+		return "", fmt.Errorf("parse message payload: %w", err)
 	}
 	g.mu.Lock()
 	client := g.client
 	channel := g.channelID
 	g.mu.Unlock()
 	if client == nil {
-		return fmt.Errorf("slack client not initialized")
+		return "", fmt.Errorf("slack client not initialized")
 	}
 	thread := g.threadForPost(req.MissionID, p.Thread)
 	var threadTS string
@@ -186,44 +188,30 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
 	}
 
-	text := p.Text
-	var blocks []slack.Block
-	if len(p.Blocks) > 0 {
-		var b slack.Blocks
-		if err := json.Unmarshal(p.Blocks, &b); err == nil {
-			blocks = b.BlockSet
-		} else {
-			log.Printf("slack blocks parse: %v", err)
-		}
-	}
+	var lines string
 	if p.Root {
-		if lines := g.requestLines(thread); lines != "" {
-			text += "\n" + lines
-			if blocks != nil {
-				blocks = append(blocks, slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, lines, false, false)))
-			}
-		}
+		lines = g.requestLines(thread)
 	}
-	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
-	if blocks != nil {
-		opts = append(opts, slack.MsgOptionBlocks(blocks...))
-	}
+	opts := messageOptions(p.Text, p.Blocks, lines)
 
+	id := thread
 	switch {
 	case p.Root && thread != "":
 		// The top-level message is rewritten in place, so it always reads as
 		// the request's current state rather than its first.
 		if _, _, _, err := client.UpdateMessageContext(ctx, channel, threadTS, opts...); err != nil {
-			return fmt.Errorf("update request message: %w", err)
+			return "", fmt.Errorf("update request message: %w", err)
 		}
 	case thread != "" && !p.Root:
-		if _, _, err := client.PostMessageContext(ctx, channel, append(opts, slack.MsgOptionTS(threadTS))...); err != nil {
-			return fmt.Errorf("post message: %w", err)
+		_, ts, err := client.PostMessageContext(ctx, channel, append(opts, slack.MsgOptionTS(threadTS))...)
+		if err != nil {
+			return "", fmt.Errorf("post message: %w", err)
 		}
+		id = threadID(channel, ts)
 	default:
 		posted, ts, err := client.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
-			return fmt.Errorf("post message: %w", err)
+			return "", fmt.Errorf("post message: %w", err)
 		}
 		// A request with no thread yet takes this post as its one
 		// top-level message.
@@ -231,12 +219,84 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		thread = threadID(posted, ts)
 		g.rememberRun(req.MissionID, thread)
 		g.rememberKey(p.Thread, thread)
+		id = thread
 	}
 
 	for _, a := range req.Attachments {
 		g.uploadAttachment(ctx, client, channel, threadTS, a)
 	}
+	return id, nil
+}
+
+// editMessage replaces a message an earlier post returned the ID of. Only the
+// content changes: where a message sits was settled when it was posted, so
+// an edit that names a thread, channel or root is refused rather than
+// silently ignored.
+func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessageRequest) error {
+	var p slackPostPayload
+	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
+		return fmt.Errorf("parse message payload: %w", err)
+	}
+	if p.Thread != "" || p.Channel != "" || p.Root {
+		return fmt.Errorf("an edit changes only text and blocks; thread, channel and root apply to posts")
+	}
+	channel, ts := splitThreadID(req.MessageID)
+	if channel == "" || ts == "" {
+		return fmt.Errorf("message id %q isn't one a post returned (<channel>/<ts>)", req.MessageID)
+	}
+	g.mu.Lock()
+	client := g.client
+	question := g.isQuestionLocked(channel, ts)
+	g.mu.Unlock()
+	if client == nil {
+		return fmt.Errorf("slack client not initialized")
+	}
+	// The gateway rewrites a question itself once it's answered, so an edit
+	// from the run would be lost or would hide the answer controls.
+	if question {
+		return fmt.Errorf("message %s is a question; it changes when it's answered", req.MessageID)
+	}
+	// A request's top-level message keeps the gateway's lines through an
+	// edit, as it does through a root post.
+	opts := messageOptions(p.Text, p.Blocks, g.requestLines(req.MessageID))
+	if _, _, _, err := client.UpdateMessageContext(ctx, channel, ts, opts...); err != nil {
+		return fmt.Errorf("edit message: %w", err)
+	}
 	return nil
+}
+
+func (g *slackGateway) isQuestionLocked(channel, ts string) bool {
+	for _, m := range g.messages {
+		if m.channel == channel && m.ts == ts {
+			return true
+		}
+	}
+	return false
+}
+
+// messageOptions builds a post's or edit's Slack content, adding the
+// gateway's lines after the mission's when there are any.
+func messageOptions(text string, rawBlocks json.RawMessage, lines string) []slack.MsgOption {
+	var blocks []slack.Block
+	if len(rawBlocks) > 0 {
+		var b slack.Blocks
+		if err := json.Unmarshal(rawBlocks, &b); err == nil {
+			blocks = b.BlockSet
+		} else {
+			log.Printf("slack blocks parse: %v", err)
+		}
+	}
+	if lines != "" {
+		text += "\n" + lines
+		if blocks != nil {
+			blocks = append(blocks, slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, lines, false, false)))
+		}
+	}
+	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	if blocks != nil {
+		opts = append(opts, slack.MsgOptionBlocks(blocks...))
+	}
+	return opts
 }
 
 // uploadAttachment uploads a squadron-supplied file (already read from the

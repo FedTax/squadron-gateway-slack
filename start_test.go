@@ -174,7 +174,7 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 
 	g = fresh()
 	g.loadCheckpoint()
-	if err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Status: done","root":true}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Status: done","root":true}`}); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls[4]; got.method != "chat.update" || got.channel != "DTEST" {
@@ -221,7 +221,7 @@ func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
 		t.Fatalf("the request must post in the channel /squadron was run in, linked to the run; got %+v", got)
 	}
 
-	if err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Fixing CO","root":true}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Fixing CO","root":true}`}); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls[1]; got.method != "chat.update" || got.channel != "CSECOND" || got.text != "Fixing CO\n"+run+"\nRequester: <@UTEST>" {
@@ -250,7 +250,7 @@ func TestChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 	ctx := context.Background()
 	post := func(missionID, payload string) {
 		t.Helper()
-		if err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: missionID, Payload: payload}); err != nil {
+		if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: missionID, Payload: payload}); err != nil {
 			t.Fatal(err)
 		}
 	}

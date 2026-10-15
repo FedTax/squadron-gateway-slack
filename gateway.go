@@ -153,8 +153,13 @@ func (g *slackGateway) OnNotification(ctx context.Context, rec gatewaysdk.Notifi
 	return g.postNotification(ctx, rec)
 }
 
-func (g *slackGateway) PostMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) error {
-	return g.postMessage(ctx, req)
+func (g *slackGateway) PostMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) (gatewaysdk.PostMessageResponse, error) {
+	id, err := g.postMessage(ctx, req)
+	return gatewaysdk.PostMessageResponse{MessageID: id}, err
+}
+
+func (g *slackGateway) EditMessage(ctx context.Context, req gatewaysdk.EditMessageRequest) error {
+	return g.editMessage(ctx, req)
 }
 
 func (g *slackGateway) MessageToolSpec(ctx context.Context) (gatewaysdk.MessageToolSpec, error) {

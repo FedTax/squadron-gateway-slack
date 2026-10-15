@@ -123,19 +123,41 @@ func TestMockSlackPreview(t *testing.T) {
 			step = "Submit mission"
 			g.onStartSubmitted(ctx, nil, slack.InteractionCallback{User: slack.User{ID: "UTEST"}, View: slack.View{CallbackID: startCallbackID, PrivateMetadata: `{"mission":"rate_triage"}`, State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{startInputPrefix + "string::issue": {"value": {Value: "TEST-001"}}}}}})
 		}
-		post := func(run, text string, root bool) {
+		post := func(run, text string, root bool) string {
 			body, _ := json.Marshal(map[string]any{"text": text, "thread": "TEST-001", "root": root})
-			must(g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: run, TaskID: "task-test", Payload: string(body)}))
+			id, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: run, TaskID: "task-test", Payload: string(body)})
+			must(err)
+			return id
+		}
+		edited := func(id string) bool {
+			channel, ts := splitThreadID(id)
+			mu.Lock()
+			defer mu.Unlock()
+			last := calls[len(calls)-1]
+			return last.Method == "chat.update" && last.Payload["channel"] == channel && last.TS == ts
 		}
 		step = "Triage root update"
 		post("run-triage", "*TEST-001*\nSynthetic rates differ in CO and PA.\nStatus: triaging", true)
 		firstRoot := g.threadForMission("run-triage")
 		checks = append(checks, check{scenario, "Case key points to the initial root", g.threadForKey("TEST-001") == firstRoot})
 		step = "Progress reply"
-		post("run-triage", "Investigating synthetic evidence; no external tools were called.", false)
+		reply := post("run-triage", "Investigating synthetic evidence; no external tools were called.", false)
+		checks = append(checks, check{scenario, "A reply's id is its own message, not the root", reply != firstRoot})
+		step = "Edit progress reply"
+		must(g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", MessageID: reply, Payload: `{"text":"Investigated synthetic evidence: CO differs, PA matches."}`}))
+		checks = append(checks, check{scenario, "Editing a reply updates that reply in place", edited(reply)})
+		step = "Edit root by id"
+		must(g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", MessageID: firstRoot, Payload: `{"text":"*TEST-001*\nSynthetic rates differ in CO.\nStatus: triaging"}`}))
+		checks = append(checks, check{scenario, "Editing the root by id updates the root in place", edited(firstRoot)})
 		q := gatewaysdk.HumanInputRecord{MissionID: "run-triage", MissionName: "rate_triage", TaskName: "discover_sessions", ToolCallID: "choice", Question: "Which synthetic state should we inspect?", Choices: []string{"CO", "PA"}, RequestedAt: time.Now()}
 		step = "Choice question"
 		must(g.postQuestion(ctx, q))
+		g.mu.Lock()
+		question := g.messages[q.ToolCallID]
+		g.mu.Unlock()
+		step = "Edit question (refused)"
+		err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", MessageID: threadID(question.channel, question.ts), Payload: `{"text":"overwritten"}`})
+		checks = append(checks, check{scenario, "Editing a question is refused", err != nil})
 		q.Response = "CO"
 		q.ResponderUserID = "slack:UTEST"
 		step = "Resolve choice"
