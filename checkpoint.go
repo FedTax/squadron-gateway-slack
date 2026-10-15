@@ -7,35 +7,83 @@ import (
 	"time"
 )
 
-// Checkpoint = the latest event timestamp the gateway has processed,
-// persisted so a restart can replay only what it missed. Lost or
-// corrupt files fall back to zero (replay everything in squadron's
-// recent window).
+// Checkpoint = what a restart needs to pick up where it left off: the
+// latest event timestamp processed, so catch-up replays only what it
+// missed, plus the request threads, so a restarted gateway keeps posting
+// each run and thread key into the thread it started in, in that thread's
+// channel, with its requester and mission lines.
+// Lost or corrupt files fall back to empty (replay everything in
+// squadron's recent window; missions are looked up again through MCP).
 
 type checkpoint struct {
 	Latest time.Time `json:"latest"`
+	// MissionThreads maps mission id → request thread ID (channel/Slack ts).
+	MissionThreads map[string]string `json:"mission_threads,omitempty"`
+	// KeyThreads maps rendered thread key → request thread ID (channel/Slack ts).
+	KeyThreads map[string]string `json:"key_threads,omitempty"`
+	// Requests maps request thread ID (channel/Slack ts) → the /squadron
+	// start it holds.
+	Requests map[string]request `json:"requests,omitempty"`
 }
 
-func (g *slackGateway) readCheckpoint() time.Time {
+func (g *slackGateway) readCheckpoint() checkpoint {
 	if g.checkpointPath == "" {
-		return time.Time{}
+		return checkpoint{}
 	}
 	data, err := os.ReadFile(g.checkpointPath)
 	if err != nil {
-		return time.Time{}
+		return checkpoint{}
 	}
 	var cp checkpoint
 	if err := json.Unmarshal(data, &cp); err != nil {
-		return time.Time{}
+		return checkpoint{}
 	}
-	return cp.Latest
+	return cp
 }
 
+// loadCheckpoint fills the gateway's state from the checkpoint file under
+// g.mu, so nothing reads half-loaded thread maps.
+func (g *slackGateway) loadCheckpoint() {
+	cp := g.readCheckpoint()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.latest = cp.Latest
+	for id, thread := range cp.MissionThreads {
+		g.missionThreads[id] = thread
+	}
+	for key, thread := range cp.KeyThreads {
+		g.keyThreads[key] = thread
+	}
+	for thread, req := range cp.Requests {
+		g.requests[thread] = req
+	}
+}
+
+// advanceCheckpoint only moves forward: catch-up and live events can arrive
+// out of order, and a step back would replay events already handled.
 func (g *slackGateway) advanceCheckpoint(t time.Time) {
-	if t.IsZero() || g.checkpointPath == "" {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !t.After(g.latest) {
 		return
 	}
-	data, err := json.Marshal(checkpoint{Latest: t})
+	g.latest = t
+	g.writeCheckpointLocked()
+}
+
+// writeCheckpointLocked must run under g.mu, in the same critical section
+// as the change it persists; otherwise a slower writer could overwrite a
+// newer state on disk with its older snapshot.
+func (g *slackGateway) writeCheckpointLocked() {
+	if g.checkpointPath == "" {
+		return
+	}
+	data, err := json.Marshal(checkpoint{
+		Latest:         g.latest,
+		MissionThreads: g.missionThreads,
+		KeyThreads:     g.keyThreads,
+		Requests:       g.requests,
+	})
 	if err != nil {
 		return
 	}

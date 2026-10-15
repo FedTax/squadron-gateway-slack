@@ -45,22 +45,6 @@ func TestSlackResponderID(t *testing.T) {
 	}
 }
 
-func TestLookupToolCallByMessageTS(t *testing.T) {
-	messages := map[string]string{
-		"tc-1": "1700000000.000100",
-		"tc-2": "1700000000.000200",
-	}
-	if got := lookupToolCallByMessageTS(messages, "1700000000.000200"); got != "tc-2" {
-		t.Errorf("got %q; want tc-2", got)
-	}
-	if got := lookupToolCallByMessageTS(messages, "1700000000.999999"); got != "" {
-		t.Errorf("unmatched ts should return empty string, got %q", got)
-	}
-	if got := lookupToolCallByMessageTS(messages, ""); got != "" {
-		t.Errorf("empty ts should return empty string, got %q", got)
-	}
-}
-
 func TestDecodeInteractionResponseRoutesByActionID(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -186,5 +170,42 @@ func TestFakeAPIErrorPath(t *testing.T) {
 
 	if _, err := g.api.ResolveHumanInput(context.Background(), "tc", "x", "u"); err == nil {
 		t.Error("expected error from fake API")
+	}
+}
+
+func TestDecodeInteractionResponseIgnoresAnswerButton(t *testing.T) {
+	if _, _, ok := decodeInteractionResponse(&slack.BlockAction{ActionID: encodeAnswerCustomID("tc-1")}); ok {
+		t.Error("the Answer button opens a modal; it must not resolve the question")
+	}
+}
+
+func TestAnswerFromSubmission(t *testing.T) {
+	cb := slack.InteractionCallback{View: slack.View{
+		CallbackID:      answerCallbackID,
+		PrivateMetadata: `{"tool_call_id":"tc-1"}`,
+		State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{
+			answerBlockID: {answerActionID: {Value: "  use staging  "}},
+		}},
+	}}
+	tc, answer, ok := answerFromSubmission(cb)
+	if !ok || tc != "tc-1" || answer != "use staging" {
+		t.Errorf("got tc=%q answer=%q ok=%v", tc, answer, ok)
+	}
+
+	cb.View.PrivateMetadata = `{"tool_call_id":"tc-1","multi_select":true}`
+	if _, answer, _ := answerFromSubmission(cb); answer != `["use staging"]` {
+		t.Errorf("a typed answer to a multi-select question must reach the agent as a JSON array, got %q", answer)
+	}
+
+	cb.View.CallbackID = "someone-else"
+	if _, _, ok := answerFromSubmission(cb); ok {
+		t.Error("a submission from another modal must be ignored")
+	}
+}
+
+func TestAnswerModalCarriesToolCallID(t *testing.T) {
+	m := answerModal(answerForm{ToolCallID: "tc-1", MultiSelect: true})
+	if m.PrivateMetadata != `{"tool_call_id":"tc-1","multi_select":true}` || m.CallbackID != answerCallbackID {
+		t.Errorf("got metadata=%q callback=%q", m.PrivateMetadata, m.CallbackID)
 	}
 }

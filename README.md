@@ -1,180 +1,183 @@
 # squadron-gateway-slack
 
-A Squadron gateway that surfaces `builtins.human.ask` questions in a
-Slack channel. When an agent asks a question, the gateway posts a
-message with quick-reply buttons (or a multi-select dropdown); the
-human's answer flows back to the agent via a button click or a thread
-reply.
+A Squadron gateway for Slack. Run `/squadron` in any channel the bot is in, or
+in a DM with the app, to start a mission. Starting a mission posts a message,
+and everything the run sends after that goes in that message's thread. What a
+post says is up to the mission.
 
-## Setup walkthrough
+## Setup
 
-You'll create a Slack app, give it two tokens (one bot, one app-level
-for Socket Mode), invite it to a channel, then point your squadron
-config at it. About 5 minutes end-to-end.
+1. Create a Slack app from this manifest:
 
-### 1. Create the Slack app
+   ```json
+   {
+     "display_information": { "name": "squadron" },
+     "features": {
+       "app_home": {
+         "home_tab_enabled": false,
+         "messages_tab_enabled": true,
+         "messages_tab_read_only_enabled": false
+       },
+       "bot_user": { "display_name": "squadron", "always_online": true },
+       "slash_commands": [
+         { "command": "/squadron", "description": "Start a Squadron mission", "should_escape": false }
+       ]
+     },
+     "oauth_config": {
+       "scopes": { "bot": ["chat:write", "commands", "files:write"] }
+     },
+     "settings": {
+       "interactivity": { "is_enabled": true },
+       "socket_mode_enabled": true,
+       "token_rotation_enabled": false
+     }
+   }
+   ```
 
-1. Go to <https://api.slack.com/apps> → **Create New App** → **From
-   scratch**.
-2. Name it `squadron` (or whatever you like) and pick your workspace.
+   - The Messages tab settings let you run `/squadron` in a DM with the app.
+   - `files:write` is only needed if missions attach files to their posts.
+   - Add `channels:read` and `groups:read` only if you set `channel_name`
+     instead of `channel_id`, or missions name a channel by name (in a post or
+     a `notification` block).
 
-### 2. Enable Socket Mode and grab the app-level token
-
-Socket Mode is how the gateway receives events without exposing a
-public URL.
-
-1. In the app's left sidebar: **Socket Mode** → toggle **Enable Socket
-   Mode**.
-2. Slack will prompt for an app-level token. Name it `squadron-socket`
-   and add the scope `connections:write`. Click **Generate**.
-3. Copy the token (starts with `xapp-`) and stash it in squadron:
+2. Create an app-level token with the `connections:write` scope and store it:
 
    ```bash
    squadron vars set slack_app_token <xapp-…>
    ```
 
-### 3. Configure bot scopes and install
-
-1. Sidebar: **OAuth & Permissions** → scroll to **Scopes** → **Bot
-   Token Scopes** → **Add an OAuth Scope** for each of:
-
-   - `chat:write` — post the question messages
-   - `channels:history` — read public-channel thread replies (free-text answers)
-   - `groups:history` — read private-channel thread replies (skip if you only post to public channels)
-   - `channels:read` — only needed if you'll use `channel_name` instead of `channel_id`
-   - `groups:read` — same, for private channels
-   - `files:write` — **only needed if agents will attach files** via the `builtins.gateway.post` tool's `attachments` (squadron reads the referenced memory/scratchpad file and the gateway uploads it). Skip it if you don't use attachments.
-
-2. Scroll up → **Install to Workspace** → **Allow**.
-3. After install, the page shows a **Bot User OAuth Token** (starts
-   with `xoxb-`). Copy it and stash:
+3. Install the app to your workspace and store its bot token:
 
    ```bash
    squadron vars set slack_bot_token <xoxb-…>
    ```
 
-### 4. Subscribe to message events
+4. Invite the bot to each channel you'll use: `/invite @squadron`.
 
-So the gateway can hear thread replies (free-text answers):
+5. Pick a default channel and store its ID. A run posts there when it wasn't
+   started from Slack and its mission doesn't name a channel:
 
-1. Sidebar: **Event Subscriptions** → toggle **Enable Events** on.
-2. Under **Subscribe to bot events** → **Add Bot User Event** for:
+   ```bash
+   squadron vars set slack_channel_id C0123456789
+   ```
 
-   - `message.channels`
-   - `message.groups` (skip if no private channels)
+6. Add the gateway and Squadron's MCP host to your config:
 
-3. Click **Save Changes**. If Slack asks you to reinstall the app
-   (because scopes changed), do it.
+   ```hcl
+   variable "slack_bot_token" {
+     secret = true
+   }
 
-### 5. Invite the bot to your channel
+   variable "slack_app_token" {
+     secret = true
+   }
 
-In Slack, in the channel where questions should land:
+   variable "slack_channel_id" {}
 
-```
-/invite @squadron
-```
+   gateway "slack" {
+     source  = "github.com/mlund01/squadron-gateway-slack"
+     version = "v0.0.1"
 
-Then grab the channel ID: click the channel name → **About** → bottom
-of the panel shows `Channel ID: C0123456789`. Stash it:
+     settings = {
+       bot_token       = vars.slack_bot_token
+       app_token       = vars.slack_app_token
+       channel_id      = vars.slack_channel_id
+       checkpoint_path = "${path.cwd}/.squadron/slack-gateway.json"
+       mcp_url         = "http://localhost:8090/mcp"
+       mcp_token       = vars.mcp_host_secret
+     }
+   }
 
-```bash
-squadron vars set slack_channel_id C0123456789
-```
+   mcp_host {
+     enabled = true
+     port    = 8090
+     secret  = vars.mcp_host_secret
+   }
+   ```
 
-### 6. Wire it into your squadron config
+   Without `mcp_url`, questions and posts still work, but missions can't be
+   started from Slack.
 
-```hcl
-variable "slack_bot_token" {
-  secret = true
-}
+7. Restart Squadron. The gateway logs
+   `slack gateway ready (channel=C0123…, bot=U0123…)` once it's connected.
 
-variable "slack_app_token" {
-  secret = true
-}
+## Settings
 
-variable "slack_channel_id" {}
+| Setting           | Required | Notes |
+| ----------------- | -------- | ----- |
+| `bot_token`       | yes      | Bot token (`xoxb-…`). Use a `secret` variable. |
+| `app_token`       | yes      | App-level token (`xapp-…`) with `connections:write`. Use a `secret` variable. |
+| `channel_id`      | one of   | Default channel ID (e.g. `C0123456789`), for runs not started from Slack whose mission doesn't name a channel. |
+| `channel_name`    | one of   | The default channel by name (e.g. `general`). Looked up at startup, so renaming the channel breaks it. |
+| `checkpoint_path` | optional | Where the gateway saves its state across restarts. Defaults to `./.squadron-slack-gateway.json`. |
+| `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
+| `mcp_token`       | optional | The MCP host's `secret`. Use a `secret` variable. |
+| `run_url`         | optional | Link to a run's page, with `{mission_id}` where the run id goes. The mission name on the top-level message links there. |
 
-gateway "slack" {
-  source  = "github.com/mlund01/squadron-gateway-slack"
-  version = "v0.0.1"
+## Starting a mission
 
-  settings = {
-    bot_token       = vars.slack_bot_token
-    app_token       = vars.slack_app_token
-    channel_id      = vars.slack_channel_id
-    checkpoint_path = "${path.cwd}/.squadron/slack-gateway.json"
-  }
-}
-```
+1. Run `/squadron` in a channel the bot is in, or in your DM with the app to
+   keep the request private.
+2. Pick a mission. The form shows one field per input, with its description and
+   default. Required inputs must be filled in. Enter non-string inputs as JSON,
+   e.g. `["CO", "PA"]`.
+3. Click **Start**. If Squadron rejects an input, the error shows on that field
+   and the form stays open. Any other start error is sent only to you.
 
-Restart squadron. The log should show `gateway "slack" started` and
-something like `slack gateway ready (channel=C0123…, bot=U0123…)`.
-The next `builtins.human.ask` call lands in your channel.
+**Limitation:** protected inputs aren't on the form and can't be set from Slack.
+A mission started from Slack only works if its config gives every protected
+input its `value`.
 
-## Settings reference
+## A request from start to finish
 
-| Setting           | Required | Notes                                                                 |
-| ----------------- | -------- | --------------------------------------------------------------------- |
-| `bot_token`       | yes      | Bot User OAuth Token (`xoxb-…`). Use a `secret` variable.             |
-| `app_token`       | yes      | App-Level Token (`xapp-…`) with `connections:write`. Use a `secret` variable. |
-| `channel_id`      | one of   | Slack channel ID (e.g. `C0123456789`).                                |
-| `channel_name`    | one of   | Channel name (e.g. `general` or `#general`). Resolved at startup; needs `channels:read` / `groups:read`. |
-| `checkpoint_path` | optional | Where the gateway persists the last event timestamp it processed. Defaults to `./.squadron-slack-gateway.json`. |
+1. **It starts.**
+   - From Slack: you run `/squadron` (see [Starting a mission](#starting-a-mission)).
+     The top-level message is posted right away, in the channel or DM you ran
+     it in.
+   - From Squadron (the command center, a schedule, a route): nothing is posted
+     until the run first sends something. That first message becomes the
+     top-level message. It goes in the channel the mission names, or in the
+     default channel if it names none. A question can't name a channel, so a
+     run whose first message is a question opens in the default channel.
+2. **The top-level message.** For a `/squadron` start, the gateway puts two
+   lines on it: the mission name, linked to the run if `run_url` is set
+   (otherwise the name and run id), and `Requester: @you`. For a start in
+   Squadron, it's the run's first message. As the work moves on, the mission
+   can replace the message's content. The gateway keeps its lines on it.
+3. **While it runs**, the run's posts and questions are replies in that
+   message's thread. The mission can edit any of its own posts later, e.g. to
+   tick off a step, but not a question. Answer questions there (see
+   [Answering questions](#answering-questions)).
+4. **When it ends**, whatever the run posts last, and any notification from the
+   mission's `notification { gateway { … } }` block (`mission_completed`,
+   `mission_failed`), arrive in the same thread.
+5. **Follow-up runs.** Missions that work on the same request can share a
+   `thread` key (e.g. a ticket key) on their posts. A later run that posts
+   under that key replies in the request's existing thread instead of opening
+   a new top-level message. A run that may ask a question before it posts
+   calls `builtins.gateway.link` with the key first; see the
+   [technical reference](docs/technical-reference.md).
 
-Set exactly one of `channel_id` or `channel_name`. `channel_id` is the
-most stable handle — renaming a channel won't break the gateway.
-`channel_name` is friendlier but pays a startup paginated REST round-
-trip and breaks if the channel is renamed.
+## Answering questions
 
-## What the operator sees
-
-For a question with choices:
-
-```
-*Should I proceed with prod or staging?*
-The schemas are identical except for the past 24 hours of writes.
-
-[ prod ] [ staging ] [ both ]
-
-`databricks_explore › discover`
-```
-
-Click a button to answer. For multi-select questions (`multi_select:
-true` on the agent's tool call) the channel shows a multi-select
-dropdown picker instead of buttons. For free-text questions, **reply
-in the message's thread** and the body of your reply becomes the
-answer.
-
-When a question is resolved (here, in Slack, in Command Center, or
-anywhere else), the message is edited to strike through the question
-and append the answer.
-
-## Local development
-
-If you want to hack on the gateway itself, point your squadron config
-at a locally-built binary:
-
-```hcl
-gateway "slack" {
-  version = "local"   # skips the GitHub download
-  # source omitted intentionally
-  settings = { ... }
-}
-```
-
-Then build and install:
-
-```bash
-go build -o gateway .
-mkdir -p ~/.squadron/gateways/darwin-arm64/slack/local
-mv gateway ~/.squadron/gateways/darwin-arm64/slack/local/gateway
-```
-
-Adjust the platform path to match `runtime.GOOS-runtime.GOARCH`.
+- A question with choices has a button per choice, or a dropdown if it allows
+  several. Its **Other…** button opens a text box for an answer that isn't
+  listed.
+- A free-text question has an **Answer** button that opens a text box.
+- Replies typed in the thread are never read as answers. That's deliberate:
+  the thread can hold discussion and a record of decisions without any of it
+  being taken as an answer, and a reply couldn't say which of several open
+  questions it answers. Answers go only through the buttons, the dropdown or
+  the text box.
+- Once a question is answered, here or anywhere else (e.g. the command center),
+  its message is edited: the question is struck through, followed by the answer
+  and who gave it.
 
 ## See also
 
-- [`squadron-gateway-discord`](https://github.com/mlund01/squadron-gateway-discord)
-  — same protocol, different surface; useful as a reference.
-- [`squadron-gateway-sdk`](https://github.com/mlund01/squadron-gateway-sdk)
-  — the Go SDK if you want to build a gateway for some other system.
+- [Technical reference](docs/technical-reference.md): the `gateway.post`
+  payload, how runs find their thread, saved state, and local development.
+- [`squadron-gateway-sdk`](https://github.com/mlund01/squadron-gateway-sdk):
+  the Go SDK for building a gateway for another system.
+- [`squadron-gateway-discord`](https://github.com/mlund01/squadron-gateway-discord):
+  the same protocol for Discord.
