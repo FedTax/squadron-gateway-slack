@@ -31,6 +31,8 @@ func (g *slackGateway) questionChannel(toolCallID string) string {
 // postQuestion posts a fresh request to Slack. Idempotent on
 // tool_call_id so catch-up replays don't double-post.
 func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInputRecord) error {
+	unlock := g.lockConversation(rec.ThreadID)
+	defer unlock()
 	g.mu.Lock()
 	if _, exists := g.messages[rec.ToolCallID]; exists {
 		g.mu.Unlock()
@@ -43,17 +45,17 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		return fmt.Errorf("slack client not initialized")
 	}
 
-	thread := g.threadForMission(rec.MissionID)
-	if thread == "" && rec.MissionID != "" {
+	thread := g.threadForMissionThread(rec.ThreadID)
+	if thread == "" && rec.ThreadID != "" {
 		var err error
-		if thread, err = g.startThread(ctx, rec.MissionID, fallbackThreadTitle(rec)); err != nil {
+		if thread, err = g.startThread(ctx, rec.ThreadID, fallbackThreadTitle(rec)); err != nil {
 			return err
 		}
 	}
 
 	var threadTS string
 	if thread != "" {
-		channel, threadTS = splitThreadID(thread)
+		channel, threadTS = splitSlackThreadRef(thread)
 	}
 
 	blocks := buildBlocks(rec, thread == "")
@@ -82,6 +84,8 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 // back to the configured default channel). No idempotency map — there is
 // nothing to track or edit.
 func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.NotificationRecord) error {
+	unlock := g.lockConversation(rec.ThreadID)
+	defer unlock()
 	g.mu.Lock()
 	client := g.client
 	channel := g.channelID
@@ -90,10 +94,10 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 		return fmt.Errorf("slack client not initialized")
 	}
 	body := buildNotificationBody(rec)
-	thread := g.threadForMission(rec.MissionID)
+	thread := g.threadForMissionThread(rec.ThreadID)
 	var threadTS string
 	if thread != "" {
-		channel, threadTS = splitThreadID(thread)
+		channel, threadTS = splitSlackThreadRef(thread)
 	} else if rec.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, rec.Channel, channel)
 	}
@@ -116,7 +120,7 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 		return fmt.Errorf("post notification: %w", err)
 	}
 	if thread == "" {
-		g.rememberRun(rec.MissionID, threadID(posted, ts))
+		g.rememberThread(rec.ThreadID, slackThreadRef(posted, ts))
 	}
 	return nil
 }
@@ -125,9 +129,9 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 // MessageToolSpec so the LLM knows how to format a Slack post.
 const slackPostDescription = "Post a Slack message. " +
 	"`text` is the message body and supports Slack mrkdwn (*bold*, _italics_, `code`, > quotes, <url|label> links). " +
-	"`thread` is a key naming the request (e.g. its ticket key): the post replies in that request's thread, or becomes its top-level message when there is none yet. Set `root` to replace the request's top-level message with this post instead of replying. " +
+	"Messages share the conversation of the current mission thread (chain of related runs). Set `root` to replace its complete top-level content instead of replying. " +
 	"The result gives the message's id, which builtins.gateway.edit takes to change it later. " +
-	"`channel` optionally picks where a new request's top-level message goes — a channel name (with or without a leading #) or id. Once the run or key has a thread, posts stay in it. " +
+	"`channel` optionally picks where a new request's top-level message goes — a channel name (with or without a leading #) or id. Once the mission thread has a Slack conversation, posts stay in it. " +
 	"`blocks` is an optional Slack Block Kit array for rich layout; each element is a block object with a `type`. Common types: " +
 	"`header` = {\"type\":\"header\",\"text\":{\"type\":\"plain_text\",\"text\":\"...\"}}; " +
 	"`section` = {\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\"...\"}} (or use \"fields\":[{\"type\":\"mrkdwn\",\"text\":\"...\"}] for a two-column grid); " +
@@ -141,8 +145,7 @@ const slackPostSchema = `{
   "type": "object",
   "properties": {
     "text": {"type": "string", "description": "Message body (Slack mrkdwn supported). When blocks are set, this is the notification/preview fallback."},
-    "channel": {"type": "string", "description": "Optional channel name or id to open the request's thread in. Used only when the run and thread key have no thread yet; otherwise the post goes in the existing thread."},
-    "thread": {"type": "string", "description": "Optional key naming the request, e.g. its ticket key. Runs that post under the same key share one thread."},
+    "channel": {"type": "string", "description": "Optional channel name or id to open the request's thread in. Used only when the mission thread has no Slack conversation yet; otherwise the post goes in the existing thread."},
     "root": {"type": "boolean", "description": "Replace the request's top-level message with this post, or post it when the request has none, instead of replying in its thread."},
     "blocks": {
       "type": "array",
@@ -155,10 +158,8 @@ const slackPostSchema = `{
 
 type slackPostPayload struct {
 	Text string `json:"text"`
-	// Channel only chooses where a new request thread opens; once a run or
-	// key has a thread, its posts must stay in it.
+	// Channel chooses the destination only when creating a new conversation.
 	Channel string          `json:"channel,omitempty"`
-	Thread  string          `json:"thread,omitempty"`
 	Root    bool            `json:"root,omitempty"`
 	Blocks  json.RawMessage `json:"blocks,omitempty"`
 }
@@ -169,6 +170,8 @@ type slackPostPayload struct {
 // to the configured default channel). It returns the ID of the message the
 // post created or replaced, for builtins.gateway.edit.
 func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) (string, error) {
+	unlock := g.lockConversation(req.ThreadID)
+	defer unlock()
 	var p slackPostPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return "", fmt.Errorf("parse message payload: %w", err)
@@ -180,10 +183,10 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	if client == nil {
 		return "", fmt.Errorf("slack client not initialized")
 	}
-	thread := g.threadForPost(req.MissionID, p.Thread)
+	thread := g.threadForMissionThread(req.ThreadID)
 	var threadTS string
 	if thread != "" {
-		channel, threadTS = splitThreadID(thread)
+		channel, threadTS = splitSlackThreadRef(thread)
 	} else if p.Channel != "" {
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
 	}
@@ -207,7 +210,7 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		if err != nil {
 			return "", fmt.Errorf("post message: %w", err)
 		}
-		id = threadID(channel, ts)
+		id = slackThreadRef(channel, ts)
 	default:
 		posted, ts, err := client.PostMessageContext(ctx, channel, opts...)
 		if err != nil {
@@ -216,9 +219,8 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		// A request with no thread yet takes this post as its one
 		// top-level message.
 		channel, threadTS = posted, ts
-		thread = threadID(posted, ts)
-		g.rememberRun(req.MissionID, thread)
-		g.rememberKey(p.Thread, thread)
+		thread = slackThreadRef(posted, ts)
+		g.rememberThread(req.ThreadID, thread)
 		id = thread
 	}
 
@@ -230,17 +232,19 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 
 // editMessage replaces a message an earlier post returned the ID of. Only the
 // content changes: where a message sits was settled when it was posted, so
-// an edit that names a thread, channel or root is refused rather than
+// an edit that names a channel or root is refused rather than
 // silently ignored.
 func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessageRequest) error {
+	unlock := g.lockConversation(req.ThreadID)
+	defer unlock()
 	var p slackPostPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return fmt.Errorf("parse message payload: %w", err)
 	}
-	if p.Thread != "" || p.Channel != "" || p.Root {
-		return fmt.Errorf("an edit changes only text, blocks and attachments; thread, channel and root apply to posts")
+	if p.Channel != "" || p.Root {
+		return fmt.Errorf("an edit changes only text, blocks and attachments; channel and root apply to posts")
 	}
-	channel, ts := splitThreadID(req.MessageID)
+	channel, ts := splitSlackThreadRef(req.MessageID)
 	if channel == "" || ts == "" {
 		return fmt.Errorf("message id %q isn't one a post returned (<channel>/<ts>)", req.MessageID)
 	}
@@ -265,8 +269,8 @@ func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessa
 	// An edit's files land where a post's would, in the run's thread, so they
 	// stay with the request rather than starting a new top-level message.
 	fileChannel, fileThread := channel, ts
-	if thread := g.threadForMission(req.MissionID); thread != "" {
-		fileChannel, fileThread = splitThreadID(thread)
+	if thread := g.threadForMissionThread(req.ThreadID); thread != "" {
+		fileChannel, fileThread = splitSlackThreadRef(thread)
 	}
 	for _, a := range req.Attachments {
 		g.uploadAttachment(ctx, client, fileChannel, fileThread, a)

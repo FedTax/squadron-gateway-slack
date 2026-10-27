@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -184,7 +185,10 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 		channel = g.channelID
 	}
 	dm := strings.HasPrefix(channel, "D")
-	missionID, err := g.mcp.startMission(ctx, form.Mission, inputs)
+	missionThreadID := uuid.NewString()
+	unlock := g.lockConversation(missionThreadID)
+	defer unlock()
+	missionID, err := g.mcp.startMission(ctx, form.Mission, inputs, missionThreadID)
 	if err != nil {
 		if errs := startFieldErrors(cb, err); errs != nil {
 			g.ack(req, slack.NewErrorsViewSubmissionResponse(errs))
@@ -213,9 +217,8 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 		log.Printf("post request message for %s: %v", missionID, err)
 		return
 	}
-	thread := threadID(channel, ts)
-	g.rememberRequest(thread, cb.User.ID, run)
-	g.rememberRun(missionID, thread)
+	thread := slackThreadRef(channel, ts)
+	g.rememberRequest(missionThreadID, thread, cb.User.ID, run)
 }
 
 func (g *slackGateway) postToDM(ctx context.Context, user, text string) {

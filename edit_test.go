@@ -64,14 +64,14 @@ func TestPostReturnsTheIDOfTheMessageItCreatedOrReplaced(t *testing.T) {
 	ctx := context.Background()
 	post := func(payload string) string {
 		t.Helper()
-		id, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: payload})
+		id, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", ThreadID: "run-1", Payload: payload})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
 
-	root := post(`{"text":"Triaging","thread":"DEV-1"}`)
+	root := post(`{"text":"Triaging"}`)
 	if root != "CTEST/1700000000.000001" {
 		t.Fatalf("opening a thread must return the root's id; got %q", root)
 	}
@@ -86,15 +86,15 @@ func TestPostReturnsTheIDOfTheMessageItCreatedOrReplaced(t *testing.T) {
 func TestEditUpdatesTheMessageTheIDNames(t *testing.T) {
 	g, calls := editTestGateway(t)
 	ctx := context.Background()
-	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: `{"text":"Triaging","thread":"DEV-1"}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", ThreadID: "run-1", Payload: `{"text":"Triaging"}`}); err != nil {
 		t.Fatal(err)
 	}
-	reply, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: `{"text":"Checking CO"}`})
+	reply, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", ThreadID: "run-1", Payload: `{"text":"Checking CO"}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-1", MessageID: reply, Payload: `{"text":"Checked CO: rate differs"}`}); err != nil {
+	if err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-1", ThreadID: "run-1", MessageID: reply, Payload: `{"text":"Checked CO: rate differs"}`}); err != nil {
 		t.Fatal(err)
 	}
 	got := calls()[2]
@@ -106,16 +106,16 @@ func TestEditUpdatesTheMessageTheIDNames(t *testing.T) {
 func TestEditUploadsItsAttachmentsIntoTheRunsThread(t *testing.T) {
 	g, calls := editTestGateway(t)
 	ctx := context.Background()
-	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: `{"text":"Triaging","thread":"DEV-1"}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", ThreadID: "run-1", Payload: `{"text":"Triaging"}`}); err != nil {
 		t.Fatal(err)
 	}
-	reply, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", Payload: `{"text":"Checking CO"}`})
+	reply, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-1", ThreadID: "run-1", Payload: `{"text":"Checking CO"}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{
-		MissionID:   "run-1",
+		MissionID: "run-1", ThreadID: "run-1",
 		MessageID:   reply,
 		Payload:     `{"text":"Checked CO: rate differs"}`,
 		Attachments: []gatewaysdk.FileAttachment{{Filename: "co.csv", MimeType: "text/csv", Content: []byte("a,b")}},
@@ -138,10 +138,10 @@ func TestEditUploadsItsAttachmentsIntoTheRunsThread(t *testing.T) {
 
 func TestEditOfARequestRootKeepsTheGatewayLines(t *testing.T) {
 	g, calls := editTestGateway(t)
-	root := threadID("CTEST", "1700000000.000009")
-	g.requests[root] = request{MissionLine: "*rate_triage* · run-1", Requester: "UTEST"}
+	root := slackThreadRef("CTEST", "1700000000.000009")
+	g.conversations["run-1"] = &conversation{Root: root, MissionLine: "*rate_triage* · run-1", Requester: "UTEST"}
 
-	if err := g.editMessage(context.Background(), gatewaysdk.EditMessageRequest{MissionID: "run-1", MessageID: root, Payload: `{"text":"Status: done"}`}); err != nil {
+	if err := g.editMessage(context.Background(), gatewaysdk.EditMessageRequest{MissionID: "run-1", ThreadID: "run-1", MessageID: root, Payload: `{"text":"Status: done"}`}); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls()[0].text; got != "Status: done\n*rate_triage* · run-1\nRequester: <@UTEST>" {
@@ -155,7 +155,6 @@ func TestEditIsRefusedForQuestionsPlacementAndBadIDs(t *testing.T) {
 	ctx := context.Background()
 	for name, req := range map[string]gatewaysdk.EditMessageRequest{
 		"question": {MessageID: "CTEST/1700000000.000005", Payload: `{"text":"x"}`},
-		"thread":   {MessageID: "CTEST/1700000000.000001", Payload: `{"text":"x","thread":"DEV-2"}`},
 		"channel":  {MessageID: "CTEST/1700000000.000001", Payload: `{"text":"x","channel":"COTHER"}`},
 		"root":     {MessageID: "CTEST/1700000000.000001", Payload: `{"text":"x","root":true}`},
 		"no ts":    {MessageID: "CTEST", Payload: `{"text":"x"}`},

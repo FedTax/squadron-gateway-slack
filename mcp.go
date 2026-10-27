@@ -20,8 +20,8 @@ type squadronMCP struct {
 }
 
 // startMission calls run_mission and returns the new mission id.
-func (s *squadronMCP) startMission(ctx context.Context, name string, inputs map[string]any) (string, error) {
-	text, err := s.callTool(ctx, "run_mission", map[string]any{"name": name, "inputs": inputs})
+func (s *squadronMCP) startMission(ctx context.Context, name string, inputs map[string]any, missionThreadID string) (string, error) {
+	text, err := s.callTool(ctx, "run_mission", map[string]any{"name": name, "inputs": inputs, "thread_id": missionThreadID})
 	if err != nil {
 		return "", err
 	}

@@ -19,7 +19,6 @@ func TestPostPayloadParsing(t *testing.T) {
 	raw := `{
 		"text": "deploy done",
 		"channel": "#ops",
-		"thread": "1700000000.000100",
 		"blocks": [{"type":"section","text":{"type":"mrkdwn","text":"*hi*"}}]
 	}`
 
@@ -32,9 +31,6 @@ func TestPostPayloadParsing(t *testing.T) {
 	}
 	if p.Channel != "#ops" {
 		t.Errorf("Channel: got %q", p.Channel)
-	}
-	if p.Thread != "1700000000.000100" {
-		t.Errorf("Thread: got %q", p.Thread)
 	}
 	if len(p.Blocks) == 0 {
 		t.Error("Blocks should be preserved as raw JSON")

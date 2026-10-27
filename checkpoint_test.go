@@ -61,35 +61,23 @@ func TestCheckpointReadIgnoresMalformedFile(t *testing.T) {
 }
 
 func TestCheckpointPersistsThreads(t *testing.T) {
-	dir := t.TempDir()
 	g := newSlackGateway()
-	g.checkpointPath = filepath.Join(dir, "cp.json")
-	thread := threadID("CTEST", "1700000000.000100")
-
-	g.rememberRequest(thread, "U1", "*rate_triage*")
-	g.rememberRun("mission-1", thread)
-	g.rememberKey("DEV-123", thread)
-
-	cp := g.readCheckpoint()
-	if cp.MissionThreads["mission-1"] != thread {
-		t.Errorf("mission thread not persisted: %+v", cp.MissionThreads)
+	g.checkpointPath = filepath.Join(t.TempDir(), "cp.json")
+	root := slackThreadRef("CTEST", "1700000000.000100")
+	g.rememberRequest("chain-1", root, "U1", "*rate_triage*")
+	restored := newSlackGateway()
+	restored.checkpointPath = g.checkpointPath
+	restored.loadCheckpoint()
+	if got := restored.threadForMissionThread("chain-1"); got != root {
+		t.Fatalf("root: %q", got)
 	}
-	if cp.KeyThreads["DEV-123"] != thread {
-		t.Errorf("key thread not persisted: %+v", cp.KeyThreads)
-	}
-	if cp.Requests[thread].Requester != "U1" {
-		t.Errorf("requester not persisted: %+v", cp.Requests)
-	}
-	if got := g.requestLines(thread); got != "*rate_triage*\nRequester: <@U1>" {
-		t.Errorf("requesterLine: got %q", got)
-	}
-	if got := g.requestLines(threadID("COTHER", "1700000000.000100")); got != "" {
-		t.Errorf("the same ts in another channel is another request; got %q", got)
+	if got := restored.requestLines(root); got != "*rate_triage*\nRequester: <@U1>" {
+		t.Fatalf("attribution: %q", got)
 	}
 }
 
 func TestSplitThreadIDGivesBackChannelAndTS(t *testing.T) {
-	channel, ts := splitThreadID(threadID("D0APPDM", "1700000000.000100"))
+	channel, ts := splitSlackThreadRef(slackThreadRef("D0APPDM", "1700000000.000100"))
 	if channel != "D0APPDM" || ts != "1700000000.000100" {
 		t.Errorf("got channel=%q ts=%q", channel, ts)
 	}

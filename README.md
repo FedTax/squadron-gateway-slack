@@ -134,9 +134,10 @@ input its `value`.
    - From Slack: you run `/squadron` (see [Starting a mission](#starting-a-mission)).
      The top-level message is posted right away, in the channel or DM you ran
      it in.
-   - From Squadron (the command center, a schedule, a route): nothing is posted
-     until the run first sends something. That first message becomes the
-     top-level message. It goes in the channel the mission names, or in the
+   - For a new mission thread started in Squadron (the command center or a
+     schedule), nothing is posted until the run first sends something. A post
+     or notification becomes the top-level message; a question gets a summary
+     root with the question beneath it. It goes in the channel the mission names, or in the
      default channel if it names none. A question can't name a channel, so a
      run whose first message is a question opens in the default channel.
 2. **The top-level message.** For a `/squadron` start, the gateway puts two
@@ -151,11 +152,12 @@ input its `value`.
 4. **When it ends**, whatever the run posts last, and any notification from the
    mission's `notification { gateway { … } }` block (`mission_completed`,
    `mission_failed`), arrive in the same thread.
-5. **Follow-up runs.** Missions that work on the same request can share a
-   `thread` key (e.g. a ticket key) on their posts. A later run that posts
-   under that key replies in the request's existing thread instead of opening
-   a new top-level message. A run that may ask a question before it posts
-   calls `builtins.gateway.link` with the key first; see the
+5. **Follow-up runs.** Squadron groups related runs into a mission thread.
+   Routed missions automatically inherit that thread, and resumed runs retain
+   it, so their posts, questions and notifications share this Slack conversation
+   from the first message. To start a separate follow-up, supply the existing
+   mission thread ID as `thread_id` when calling MCP `run_mission`. Omitting it
+   starts a new mission thread with a generated UUID. See the
    [technical reference](docs/technical-reference.md).
 
 ## Answering questions

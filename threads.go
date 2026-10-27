@@ -4,55 +4,51 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
-	gatewaysdk "github.com/mlund01/squadron-gateway-sdk"
 	"github.com/slack-go/slack"
 )
 
-// threadForMission returns the request thread the gateway has mapped the
-// run to, or "" when the run hasn't started or joined one yet.
-func (g *slackGateway) threadForMission(missionID string) string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.missionThreads[missionID]
+// conversation holds the Slack destination shared by a mission thread
+// (a chain of Squadron runs). Root is a Slack channel/timestamp reference.
+type conversation struct {
+	mu          sync.Mutex
+	Root        string `json:"root,omitempty"`
+	Requester   string `json:"requester,omitempty"`
+	MissionLine string `json:"mission_line,omitempty"`
 }
 
-// threadForPost finds the request thread for a gateway.post: the posting
-// run's own thread, else the one filed under the post's key. The run and an
-// unfiled key are both recorded against that thread, so the run's later
-// questions land there and a run started elsewhere under the same key (a
-// route, a resume) joins it instead of opening a second top-level message.
-func (g *slackGateway) threadForPost(missionID, key string) string {
+// lockConversation serializes lookup, root creation and recording the result.
+// The map lock is released before waiting so other mission threads can proceed.
+func (g *slackGateway) lockConversation(missionThreadID string) func() {
+	if missionThreadID == "" {
+		return func() {}
+	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	ts := g.missionThreads[missionID]
-	if ts == "" && key != "" {
-		ts = g.keyThreads[key]
+	c := g.conversations[missionThreadID]
+	if c == nil {
+		c = &conversation{}
+		g.conversations[missionThreadID] = c
 	}
-	if ts == "" {
-		return ""
-	}
-	changed := false
-	if missionID != "" && g.missionThreads[missionID] != ts {
-		g.missionThreads[missionID] = ts
-		changed = true
-	}
-	if key != "" && g.keyThreads[key] == "" {
-		g.keyThreads[key] = ts
-		changed = true
-	}
-	if changed {
-		g.writeCheckpointLocked()
-	}
-	return ts
+	g.mu.Unlock()
+	c.mu.Lock()
+	return c.mu.Unlock
 }
 
-// startThread posts the top-level message for a run that has no thread yet,
-// so its questions and results still collect under a single message.
-func (g *slackGateway) startThread(ctx context.Context, missionID, title string) (string, error) {
+func (g *slackGateway) threadForMissionThread(missionThreadID string) string {
 	g.mu.Lock()
-	client := g.client
-	channel := g.channelID
+	defer g.mu.Unlock()
+	if c := g.conversations[missionThreadID]; c != nil {
+		return c.Root
+	}
+	return ""
+}
+
+// startThread creates the root for a question-first conversation.
+// The caller holds the mission thread's conversation lock.
+func (g *slackGateway) startThread(ctx context.Context, missionThreadID, title string) (string, error) {
+	g.mu.Lock()
+	client, channel := g.client, g.channelID
 	g.mu.Unlock()
 	if client == nil {
 		return "", fmt.Errorf("slack client not initialized")
@@ -61,103 +57,68 @@ func (g *slackGateway) startThread(ctx context.Context, missionID, title string)
 	if err != nil {
 		return "", fmt.Errorf("post thread root: %w", err)
 	}
-	thread := threadID(posted, ts)
-	g.rememberRun(missionID, thread)
-	return thread, nil
+	root := slackThreadRef(posted, ts)
+	g.rememberThread(missionThreadID, root)
+	return root, nil
 }
 
-func (g *slackGateway) rememberRun(missionID, ts string) {
-	if missionID == "" {
+func (g *slackGateway) rememberThread(missionThreadID, root string) {
+	if missionThreadID == "" {
 		return
 	}
 	g.mu.Lock()
-	g.missionThreads[missionID] = ts
-	g.writeCheckpointLocked()
-	g.mu.Unlock()
-}
-
-func (g *slackGateway) rememberKey(key, ts string) {
-	if key == "" {
-		return
-	}
-	g.mu.Lock()
-	g.keyThreads[key] = ts
-	g.writeCheckpointLocked()
-	g.mu.Unlock()
-}
-
-// Link joins a run to the request filed under key, so a run whose first
-// message is a question or notification still lands in that request instead
-// of opening its own. A key with no request yet is filed under the run's
-// thread, if it has one, the same as a post would.
-func (g *slackGateway) Link(_ context.Context, req gatewaysdk.LinkRequest) error {
-	if req.Key == "" || req.MissionID == "" {
-		return fmt.Errorf("link needs a key and the run's mission id")
-	}
-	g.mu.Lock()
 	defer g.mu.Unlock()
-	if thread := g.keyThreads[req.Key]; thread != "" {
-		g.missionThreads[req.MissionID] = thread
-	} else if thread := g.missionThreads[req.MissionID]; thread != "" {
-		g.keyThreads[req.Key] = thread
-	} else {
-		return fmt.Errorf("no request is filed under %q yet; post with that thread key to open one", req.Key)
+	c := g.conversations[missionThreadID]
+	if c == nil {
+		c = &conversation{}
+		g.conversations[missionThreadID] = c
 	}
+	c.Root = root
 	g.writeCheckpointLocked()
-	return nil
 }
 
-func (g *slackGateway) threadForKey(key string) string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.keyThreads[key]
-}
+// slackThreadRef includes the channel because Slack timestamps are only
+// unique within a conversation.
+func slackThreadRef(channel, ts string) string { return channel + "/" + ts }
 
-// threadID names a request thread by its channel and its top-level
-// message's Slack ts. Slack only guarantees a ts is unique within one
-// conversation (docs.slack.dev/messaging/retrieving-messages), so a ts on
-// its own could match requests in two channels.
-func threadID(channel, ts string) string {
-	return channel + "/" + ts
-}
-
-// splitThreadID gives back the channel every post for the request must go
-// to, and the ts its replies hang off.
-func splitThreadID(thread string) (channel, ts string) {
-	channel, ts, _ = strings.Cut(thread, "/")
+func splitSlackThreadRef(ref string) (channel, ts string) {
+	channel, ts, _ = strings.Cut(ref, "/")
 	return channel, ts
 }
 
-// request is a /squadron start, filed under its request thread ID. Its
-// requester and mission line are put back on each root rewrite.
-type request struct {
-	Requester   string `json:"requester"`
-	MissionLine string `json:"mission_line"`
-}
-
-func (g *slackGateway) rememberRequest(thread, userID, missionLine string) {
+func (g *slackGateway) rememberRequest(missionThreadID, root, userID, missionLine string) {
 	g.mu.Lock()
-	g.requests[thread] = request{Requester: userID, MissionLine: missionLine}
+	defer g.mu.Unlock()
+	c := g.conversations[missionThreadID]
+	if c == nil {
+		c = &conversation{}
+		g.conversations[missionThreadID] = c
+	}
+	c.Root, c.Requester, c.MissionLine = root, userID, missionLine
 	g.writeCheckpointLocked()
-	g.mu.Unlock()
 }
 
-// requestLines are the gateway's own lines on a request's top-level
-// message: the run it started and who asked. A mission rewriting that
-// message doesn't know either, so they're put back on every rewrite.
-func (g *slackGateway) requestLines(ts string) string {
+// requestLines preserves the gateway-owned attribution when a root is replaced.
+func (g *slackGateway) requestLines(root string) string {
+	if root == "" {
+		return ""
+	}
 	g.mu.Lock()
-	req := g.requests[ts]
-	g.mu.Unlock()
-	run, user := req.MissionLine, req.Requester
-	var lines []string
-	if run != "" {
-		lines = append(lines, run)
+	defer g.mu.Unlock()
+	for _, c := range g.conversations {
+		if c.Root != root {
+			continue
+		}
+		var lines []string
+		if c.MissionLine != "" {
+			lines = append(lines, c.MissionLine)
+		}
+		if c.Requester != "" {
+			lines = append(lines, requesterText(c.Requester))
+		}
+		return strings.Join(lines, "\n")
 	}
-	if user != "" {
-		lines = append(lines, requesterText(user))
-	}
-	return strings.Join(lines, "\n")
+	return ""
 }
 
 // missionLine names a run on its request's top-level message, linked to

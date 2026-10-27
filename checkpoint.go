@@ -7,23 +7,10 @@ import (
 	"time"
 )
 
-// Checkpoint = what a restart needs to pick up where it left off: the
-// latest event timestamp processed, so catch-up replays only what it
-// missed, plus the request threads, so a restarted gateway keeps posting
-// each run and thread key into the thread it started in, in that thread's
-// channel, with its requester and mission lines.
-// Lost or corrupt files fall back to empty (replay everything in
-// squadron's recent window; missions are looked up again through MCP).
-
+// Checkpoints preserve mission-thread conversations and the replay cursor across restarts.
 type checkpoint struct {
-	Latest time.Time `json:"latest"`
-	// MissionThreads maps mission id → request thread ID (channel/Slack ts).
-	MissionThreads map[string]string `json:"mission_threads,omitempty"`
-	// KeyThreads maps rendered thread key → request thread ID (channel/Slack ts).
-	KeyThreads map[string]string `json:"key_threads,omitempty"`
-	// Requests maps request thread ID (channel/Slack ts) → the /squadron
-	// start it holds.
-	Requests map[string]request `json:"requests,omitempty"`
+	Latest        time.Time                `json:"latest"`
+	Conversations map[string]*conversation `json:"conversations,omitempty"`
 }
 
 func (g *slackGateway) readCheckpoint() checkpoint {
@@ -48,14 +35,10 @@ func (g *slackGateway) loadCheckpoint() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.latest = cp.Latest
-	for id, thread := range cp.MissionThreads {
-		g.missionThreads[id] = thread
-	}
-	for key, thread := range cp.KeyThreads {
-		g.keyThreads[key] = thread
-	}
-	for thread, req := range cp.Requests {
-		g.requests[thread] = req
+	for id, c := range cp.Conversations {
+		if c != nil {
+			g.conversations[id] = c
+		}
 	}
 }
 
@@ -79,10 +62,8 @@ func (g *slackGateway) writeCheckpointLocked() {
 		return
 	}
 	data, err := json.Marshal(checkpoint{
-		Latest:         g.latest,
-		MissionThreads: g.missionThreads,
-		KeyThreads:     g.keyThreads,
-		Requests:       g.requests,
+		Latest:        g.latest,
+		Conversations: g.conversations,
 	})
 	if err != nil {
 		return

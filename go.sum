@@ -1,5 +1,5 @@
-github.com/FedTax/squadron-gateway-sdk v0.0.0-20261015162040-5fbd29cba82a h1:wYCBuqLxugdAM3IuUGgLLYto3xeG0541E2hm+3Q0Jrk=
-github.com/FedTax/squadron-gateway-sdk v0.0.0-20261015162040-5fbd29cba82a/go.mod h1:G1TD///Cn18dz6LDELlYuwnavrzMAMnVVrW2hO6jkkw=
+github.com/FedTax/squadron-gateway-sdk v0.0.0-20261027155636-db3ce0558426 h1:K7E47p7ElSrim09D2oE2LIzoRnX99qvXoRjNPjHVkOc=
+github.com/FedTax/squadron-gateway-sdk v0.0.0-20261027155636-db3ce0558426/go.mod h1:G1TD///Cn18dz6LDELlYuwnavrzMAMnVVrW2hO6jkkw=
 github.com/bufbuild/protocompile v0.4.0 h1:LbFKd2XowZvQ/kajzguUp2DC9UEIQhIq77fZZlaQsNA=
 github.com/bufbuild/protocompile v0.4.0/go.mod h1:3v93+mbWn/v3xzN+31nwkJfrEpAUwp+BagBSZWx+TP8=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

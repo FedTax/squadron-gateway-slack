@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -124,11 +126,13 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 	}))
 	defer api.Close()
 
+	var startedThreadID string
 	missions := server.NewMCPServer("mock-squadron", "test", server.WithToolCapabilities(true))
 	missions.AddTool(mcp.NewTool("list_missions"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(`{"missions":[{"name":"rate_triage"}]}`), nil
 	})
-	missions.AddTool(mcp.NewTool("run_mission"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	missions.AddTool(mcp.NewTool("run_mission"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		startedThreadID, _ = req.GetArguments()["thread_id"].(string)
 		return mcp.NewToolResultText(`{"missionId":"run-triage"}`), nil
 	})
 	missionAPI := httptest.NewServer(server.NewStreamableHTTPServer(missions))
@@ -159,7 +163,7 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 		t.Fatalf("the request message must go to the requester's DM with the app; got %+v", got)
 	}
 
-	if err := g.postQuestion(ctx, gatewaysdk.HumanInputRecord{MissionID: "run-triage", ToolCallID: "q1", Question: "Which state?"}); err != nil {
+	if err := g.postQuestion(ctx, gatewaysdk.HumanInputRecord{MissionID: "run-triage", ThreadID: startedThreadID, ToolCallID: "q1", Question: "Which state?"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls[2]; got.channel != "DTEST" || got.threadTS != "1700000000.000001" {
@@ -174,7 +178,7 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 
 	g = fresh()
 	g.loadCheckpoint()
-	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Status: done","root":true}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", ThreadID: startedThreadID, Payload: `{"text":"Status: done","root":true}`}); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls[4]; got.method != "chat.update" || got.channel != "DTEST" {
@@ -182,7 +186,7 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 	}
 }
 
-func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
+func TestChannelStartStaysInItsChannelAndSharesTheConversation(t *testing.T) {
 	type call struct{ method, channel, text string }
 	var mu sync.Mutex
 	var calls []call
@@ -197,8 +201,10 @@ func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
 	}))
 	defer api.Close()
 
+	var startedThreadID string
 	missions := server.NewMCPServer("mock-squadron", "test", server.WithToolCapabilities(true))
-	missions.AddTool(mcp.NewTool("run_mission"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	missions.AddTool(mcp.NewTool("run_mission"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		startedThreadID, _ = req.GetArguments()["thread_id"].(string)
 		return mcp.NewToolResultText(`{"missionId":"run-triage"}`), nil
 	})
 	missionAPI := httptest.NewServer(server.NewStreamableHTTPServer(missions))
@@ -221,7 +227,7 @@ func TestChannelStartStaysInItsChannelAndLinksTheRun(t *testing.T) {
 		t.Fatalf("the request must post in the channel /squadron was run in, linked to the run; got %+v", got)
 	}
 
-	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", Payload: `{"text":"Fixing CO","root":true}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-triage", ThreadID: startedThreadID, Payload: `{"text":"Fixing CO","root":true}`}); err != nil {
 		t.Fatal(err)
 	}
 	if got := calls[1]; got.method != "chat.update" || got.channel != "CSECOND" || got.text != "Fixing CO\n"+run+"\nRequester: <@UTEST>" {
@@ -250,12 +256,12 @@ func TestChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 	ctx := context.Background()
 	post := func(missionID, payload string) {
 		t.Helper()
-		if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: missionID, Payload: payload}); err != nil {
+		if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: missionID, ThreadID: "shared-thread", Payload: payload}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	post("run-1", `{"text":"Triaging","thread":"DEV-1","channel":"CSECOND"}`)
+	post("run-1", `{"text":"Triaging","channel":"CSECOND"}`)
 	if got := calls[0]; got != (call{channel: "CSECOND"}) {
 		t.Fatalf("a run with no thread must open it in channel; got %+v", got)
 	}
@@ -263,7 +269,7 @@ func TestChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 	if got := calls[1]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
 		t.Errorf("later posts must follow the thread to its channel; got %+v", got)
 	}
-	post("run-2", `{"text":"Fixing","thread":"DEV-1","channel":"COTHER"}`)
+	post("run-2", `{"text":"Fixing","channel":"COTHER"}`)
 	if got := calls[2]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
 		t.Errorf("an existing thread must win over channel; got %+v", got)
 	}
@@ -290,7 +296,7 @@ func TestNotificationUsesThreadElseOpensItInItsChannel(t *testing.T) {
 	ctx := context.Background()
 	notify := func(missionID, channel string) {
 		t.Helper()
-		if err := g.postNotification(ctx, gatewaysdk.NotificationRecord{MissionID: missionID, Event: "mission_failed", Channel: channel}); err != nil {
+		if err := g.postNotification(ctx, gatewaysdk.NotificationRecord{MissionID: missionID, ThreadID: missionID, Event: "mission_failed", Channel: channel}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -306,5 +312,46 @@ func TestNotificationUsesThreadElseOpensItInItsChannel(t *testing.T) {
 	notify("run-2", "")
 	if got := calls[2]; got != (call{channel: "CTEST"}) {
 		t.Errorf("with no thread and no channel it must open the thread in the configured channel; got %+v", got)
+	}
+}
+
+func TestQuestionDuringStartWaitsForSelectedChannelRoot(t *testing.T) {
+	g, calls := editTestGateway(t)
+	questionDone := make(chan error, 1)
+	missions := server.NewMCPServer("mock-squadron", "test", server.WithToolCapabilities(true))
+	missions.AddTool(mcp.NewTool("run_mission"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		threadID, _ := req.GetArguments()["thread_id"].(string)
+		if threadID == "" {
+			return nil, fmt.Errorf("missing mission thread ID")
+		}
+		go func() {
+			questionDone <- g.postQuestion(context.Background(), gatewaysdk.HumanInputRecord{MissionID: "immediate-run", ThreadID: threadID, ToolCallID: "early", Question: "Proceed?"})
+		}()
+		// The starter owns the conversation until the run identity and root are recorded.
+		select {
+		case err := <-questionDone:
+			return nil, fmt.Errorf("question escaped startup reservation: %v", err)
+		case <-time.After(25 * time.Millisecond):
+		}
+		return mcp.NewToolResultText(`{"missionId":"immediate-run"}`), nil
+	})
+	api := httptest.NewServer(server.NewStreamableHTTPServer(missions))
+	defer api.Close()
+	g.mcp = &squadronMCP{url: api.URL + "/mcp"}
+	g.onStartSubmitted(context.Background(), nil, slack.InteractionCallback{User: slack.User{ID: "U1"}, View: slack.View{
+		CallbackID: startCallbackID, PrivateMetadata: `{"mission":"triage","channel":"CSECOND"}`,
+		State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{}},
+	}})
+	select {
+	case err := <-questionDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("question did not resume after startup")
+	}
+	got := calls()
+	if len(got) != 2 || got[0].channel != "CSECOND" || got[1].channel != "CSECOND" || got[1].threadTS != got[0].ts {
+		t.Fatalf("question did not join starter root: %+v", got)
 	}
 }

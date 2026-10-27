@@ -80,6 +80,7 @@ func TestMockSlackPreview(t *testing.T) {
 	}))
 	defer api.Close()
 
+	missionThreadID := "preview-chain"
 	missions := server.NewMCPServer("mock-squadron", "test", server.WithToolCapabilities(true))
 	missions.AddTool(mcp.NewTool("list_missions"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(`{"missions":[{"name":"rate_triage"}]}`), nil
@@ -87,7 +88,8 @@ func TestMockSlackPreview(t *testing.T) {
 	missions.AddTool(mcp.NewTool("get_mission_config"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(`{"inputs":[{"name":"issue","type":"string","required":true,"description":"Synthetic case key"},{"name":"repo_url","type":"string","required":false,"default":"https://example.invalid/repository"},{"name":"states","type":"list","required":false,"default":["CO","PA"]},{"name":"secret","type":"string","protected":true}]}`), nil
 	})
-	missions.AddTool(mcp.NewTool("run_mission"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	missions.AddTool(mcp.NewTool("run_mission"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		missionThreadID, _ = req.GetArguments()["thread_id"].(string)
 		return mcp.NewToolResultText(`{"missionId":"run-triage"}`), nil
 	})
 	missionAPI := httptest.NewServer(server.NewStreamableHTTPServer(missions))
@@ -124,13 +126,13 @@ func TestMockSlackPreview(t *testing.T) {
 			g.onStartSubmitted(ctx, nil, slack.InteractionCallback{User: slack.User{ID: "UTEST"}, View: slack.View{CallbackID: startCallbackID, PrivateMetadata: `{"mission":"rate_triage"}`, State: &slack.ViewState{Values: map[string]map[string]slack.BlockAction{startInputPrefix + "string::issue": {"value": {Value: "TEST-001"}}}}}})
 		}
 		post := func(run, text string, root bool) string {
-			body, _ := json.Marshal(map[string]any{"text": text, "thread": "TEST-001", "root": root})
-			id, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: run, TaskID: "task-test", Payload: string(body)})
+			body, _ := json.Marshal(map[string]any{"text": text, "root": root})
+			id, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: run, ThreadID: missionThreadID, TaskID: "task-test", Payload: string(body)})
 			must(err)
 			return id
 		}
 		edited := func(id string) bool {
-			channel, ts := splitThreadID(id)
+			channel, ts := splitSlackThreadRef(id)
 			mu.Lock()
 			defer mu.Unlock()
 			last := calls[len(calls)-1]
@@ -138,25 +140,25 @@ func TestMockSlackPreview(t *testing.T) {
 		}
 		step = "Triage root update"
 		post("run-triage", "*TEST-001*\nSynthetic rates differ in CO and PA.\nStatus: triaging", true)
-		firstRoot := g.threadForMission("run-triage")
-		checks = append(checks, check{scenario, "Case key points to the initial root", g.threadForKey("TEST-001") == firstRoot})
+		firstRoot := g.threadForMissionThread(missionThreadID)
+		checks = append(checks, check{scenario, "Mission thread points to the initial root", g.threadForMissionThread(missionThreadID) == firstRoot})
 		step = "Progress reply"
 		reply := post("run-triage", "Investigating synthetic evidence; no external tools were called.", false)
 		checks = append(checks, check{scenario, "A reply's id is its own message, not the root", reply != firstRoot})
 		step = "Edit progress reply"
-		must(g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", MessageID: reply, Payload: `{"text":"Investigated synthetic evidence: CO differs, PA matches."}`}))
+		must(g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", ThreadID: missionThreadID, MessageID: reply, Payload: `{"text":"Investigated synthetic evidence: CO differs, PA matches."}`}))
 		checks = append(checks, check{scenario, "Editing a reply updates that reply in place", edited(reply)})
 		step = "Edit root by id"
-		must(g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", MessageID: firstRoot, Payload: `{"text":"*TEST-001*\nSynthetic rates differ in CO.\nStatus: triaging"}`}))
+		must(g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", ThreadID: missionThreadID, MessageID: firstRoot, Payload: `{"text":"*TEST-001*\nSynthetic rates differ in CO.\nStatus: triaging"}`}))
 		checks = append(checks, check{scenario, "Editing the root by id updates the root in place", edited(firstRoot)})
-		q := gatewaysdk.HumanInputRecord{MissionID: "run-triage", MissionName: "rate_triage", TaskName: "discover_sessions", ToolCallID: "choice", Question: "Which synthetic state should we inspect?", Choices: []string{"CO", "PA"}, RequestedAt: time.Now()}
+		q := gatewaysdk.HumanInputRecord{MissionID: "run-triage", ThreadID: missionThreadID, MissionName: "rate_triage", TaskName: "discover_sessions", ToolCallID: "choice", Question: "Which synthetic state should we inspect?", Choices: []string{"CO", "PA"}, RequestedAt: time.Now()}
 		step = "Choice question"
 		must(g.postQuestion(ctx, q))
 		g.mu.Lock()
 		question := g.messages[q.ToolCallID]
 		g.mu.Unlock()
 		step = "Edit question (refused)"
-		err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", MessageID: threadID(question.channel, question.ts), Payload: `{"text":"overwritten"}`})
+		err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{MissionID: "run-triage", ThreadID: missionThreadID, MessageID: slackThreadRef(question.channel, question.ts), Payload: `{"text":"overwritten"}`})
 		checks = append(checks, check{scenario, "Editing a question is refused", err != nil})
 		q.Response = "CO"
 		q.ResponderUserID = "slack:UTEST"
@@ -173,7 +175,7 @@ func TestMockSlackPreview(t *testing.T) {
 		must(g.markResolved(ctx, q))
 		step = "Routed run root update"
 		post("run-fix", "*TEST-001*\nCause: synthetic fixture mismatch.\nStatus: fixing", true)
-		checks = append(checks, check{scenario, "Routed run shares the initial root", g.threadForMission("run-fix") == firstRoot})
+		checks = append(checks, check{scenario, "Routed run shares the initial root", g.threadForMissionThread(missionThreadID) == firstRoot})
 		q.MissionID = "run-fix"
 		q.MissionName = "rate_fix"
 		q.ToolCallID = "routed-choice"
@@ -183,12 +185,12 @@ func TestMockSlackPreview(t *testing.T) {
 		step = "Routed question"
 		must(g.postQuestion(ctx, q))
 		step = "Failure notification"
-		must(g.postNotification(ctx, gatewaysdk.NotificationRecord{MissionID: "run-fix", MissionName: "rate_fix", Event: "mission_failed", Error: "Intentional mock failure"}))
+		must(g.postNotification(ctx, gatewaysdk.NotificationRecord{MissionID: "run-fix", ThreadID: missionThreadID, MissionName: "rate_fix", Event: "mission_failed", Error: "Intentional mock failure"}))
 		g = fresh()
 		g.loadCheckpoint()
 		step = "Final summary after restart"
 		post("run-finalize", "*TEST-001*\nResolves the synthetic fixture mismatch in CO and PA.\nStatus: complete\n<https://example.invalid/fix/pr/1|Synthetic fix PR> · <https://example.invalid/bruno/pr/2|Synthetic Bruno PR>\n<https://example.invalid/session/1|Synthetic development session>", true)
-		checks = append(checks, check{scenario, "Restarted gateway rejoins the initial root", g.threadForMission("run-finalize") == firstRoot})
+		checks = append(checks, check{scenario, "Restarted gateway rejoins the initial root", g.threadForMissionThread(missionThreadID) == firstRoot})
 	}
 	data, err := json.MarshalIndent(map[string]any{"calls": calls, "checks": checks}, "", "  ")
 	must(err)

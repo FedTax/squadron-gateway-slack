@@ -26,18 +26,13 @@ type slackGateway struct {
 	// request resolves (regardless of which surface resolved it).
 	messages map[string]postedMessage
 
-	// mission id → request thread ts, thread key → request thread ts, and
-	// request thread ts → the request started there. Persisted in the
-	// checkpoint; see threads.go.
-	missionThreads map[string]string
-	keyThreads     map[string]string
-	requests       map[string]request
+	// conversations is keyed by Squadron mission thread: a chain of related runs.
+	conversations map[string]*conversation
 
 	// run_url: the run page link template, with {mission_id}.
 	runURL string
 
-	// nil when mcp_url isn't set: missions can't be started from Slack and
-	// runs the gateway didn't start can't be traced to their thread.
+	// nil when mcp_url isn't set: missions cannot be started from Slack.
 	mcp *squadronMCP
 
 	checkpointPath string
@@ -50,10 +45,8 @@ type slackGateway struct {
 
 func newSlackGateway() *slackGateway {
 	return &slackGateway{
-		messages:       map[string]postedMessage{},
-		missionThreads: map[string]string{},
-		keyThreads:     map[string]string{},
-		requests:       map[string]request{},
+		messages:      map[string]postedMessage{},
+		conversations: map[string]*conversation{},
 	}
 }
 
