@@ -41,14 +41,12 @@ posted earlier stay.
 
 Squadron's `ThreadID` identifies a **mission thread: a chain of related mission
 runs**. Each run retains its own `MissionID` for run URLs, attribution and question
-ownership. The mission thread ID is independent of Slack's channel/timestamp
-reference.
+ownership.
 
 Squadron generates a UUID when a mission starts without a supplied thread ID.
 Automatic cross-mission routing inherits it, and resuming retains it. To start a
 separate follow-up in the same conversation, pass the existing ID as
 `thread_id` to MCP `run_mission`. Its response includes `missionId` and `threadId`.
-The agent does not need to post or call another tool before asking a question.
 
 Posts, edits, questions and notifications carry the mission thread ID outside
 the agent-authored payload. The gateway uses it to find one Slack conversation:
@@ -61,9 +59,9 @@ the agent-authored payload. The gateway uses it to find one Slack conversation:
 3. For other starts, the first post or notification becomes the root, in its
    channel override or the configured default channel. A first question creates
    a summary root in the default channel and posts the question beneath it.
-4. `root: true` replaces the complete root content. It does not return the
-   previous content to the agent. Missions can keep shared content in an
-   explicitly configured memory and use it to compose later replacements.
+4. `root: true` replaces the complete root content. To reuse previous
+   content, missions can keep it in a configured memory and use it to compose
+   later replacements.
 
 Root lookup, creation and recording are serialized per mission thread, so
 concurrent first messages share a root while unrelated threads proceed

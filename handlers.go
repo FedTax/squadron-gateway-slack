@@ -150,9 +150,7 @@ const (
 	multiSelectValue = "multi"
 )
 
-// answerForm rides in the answer modal's private_metadata so the submission
-// resolves exactly the question whose button opened it, in the shape that
-// question's agent expects.
+// answerForm preserves the question ID and answer format across modal submission.
 type answerForm struct {
 	ToolCallID  string `json:"tool_call_id"`
 	MultiSelect bool   `json:"multi_select,omitempty"`
@@ -177,9 +175,8 @@ func answerModal(form answerForm) slack.ModalViewRequest {
 	}
 }
 
-// answerFromSubmission reads the typed answer. A multi-select question's
-// agent was told its answer is a JSON array, so a typed answer to one is
-// sent as a one-item array.
+// answerFromSubmission reads a typed answer and encodes multi-select answers
+// as a one-item JSON array.
 func answerFromSubmission(cb slack.InteractionCallback) (toolCallID, answer string, ok bool) {
 	if cb.View.CallbackID != answerCallbackID || cb.View.State == nil {
 		return "", "", false

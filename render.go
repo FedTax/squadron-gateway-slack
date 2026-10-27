@@ -28,9 +28,7 @@ func buildFallbackText(rec gatewaysdk.HumanInputRecord) string {
 //     only valid as section accessories or in input blocks), then an
 //     actions block with Other
 //
-// Squadron's ask tool promises the agent that a human can always answer
-// outside the choices, so every choice question gets an Other button that
-// opens the same modal as Answer.
+// Every choice question includes an Other button for a typed answer.
 func buildBlocks(rec gatewaysdk.HumanInputRecord, topLevel bool) []slack.Block {
 	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec, topLevel), false, false)
 
@@ -50,11 +48,8 @@ func buildBlocks(rec gatewaysdk.HumanInputRecord, topLevel bool) []slack.Block {
 	return blocks
 }
 
-// buildAnswerButton opens the answer modal. Typed answers come from the
-// modal rather than thread replies because a request thread can hold
-// several open questions, and a reply can't say which one it answers. The
-// button's value marks a multi-select question, whose answer must reach the
-// agent as a JSON array like a picked one does.
+// buildAnswerButton associates the answer modal with this question.
+// Its value preserves multi-select mode for encoding the submitted answer.
 func buildAnswerButton(rec gatewaysdk.HumanInputRecord, label string) *slack.ButtonBlockElement {
 	value := ""
 	if rec.MultiSelect {
@@ -67,9 +62,8 @@ func buildAnswerButton(rec gatewaysdk.HumanInputRecord, label string) *slack.But
 	)
 }
 
-// fallbackThreadTitle is the top-level message for a run that asks before
-// it has posted one: the mission and what it is asking, so the thread can
-// still be found by searching the channel until the mission rewrites it.
+// fallbackThreadTitle combines the mission name and question summary
+// so a question-first conversation has a searchable root message.
 func fallbackThreadTitle(rec gatewaysdk.HumanInputRecord) string {
 	name := rec.MissionName
 	if name == "" {
@@ -118,8 +112,7 @@ func buildMessageBody(rec gatewaysdk.HumanInputRecord, topLevel bool) string {
 
 func buildResolvedBody(rec gatewaysdk.HumanInputRecord) string {
 	var b strings.Builder
-	// The whole question, not a cut-down one: the answer only makes sense
-	// next to what was asked, and the posted question was already this long.
+	// Keep the question alongside its answer so the resolved message retains context.
 	b.WriteString("~")
 	b.WriteString(rec.Question)
 	b.WriteString("~\n")

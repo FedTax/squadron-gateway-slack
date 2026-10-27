@@ -227,8 +227,7 @@ func (g *slackGateway) postToDM(ctx context.Context, user, text string) {
 	}
 }
 
-// squadron names the input it rejects as `input 'name'` or
-// `required input 'name'` (config/mission.go ResolveInputValues).
+// Match the input name in a mission-start validation error.
 var rejectedInput = regexp.MustCompile(`input '([^']+)'`)
 
 // startFieldErrors places a run_mission error on the form field it is

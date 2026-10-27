@@ -18,8 +18,9 @@ type conversation struct {
 	MissionLine string `json:"mission_line,omitempty"`
 }
 
-// lockConversation serializes lookup, root creation and recording the result.
-// The map lock is released before waiting so other mission threads can proceed.
+// lockConversation acquires exclusive access for a nonempty mission thread ID.
+// Callers hold it through root lookup, creation and recording. The map lock is
+// released before waiting so other mission threads can proceed.
 func (g *slackGateway) lockConversation(missionThreadID string) func() {
 	if missionThreadID == "" {
 		return func() {}

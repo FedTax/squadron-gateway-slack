@@ -11,9 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// squadronMCP talks to squadron's MCP host. The gateway SDK only lets a
-// gateway list and resolve questions, so starting a mission and reading a
-// run's inputs go through MCP instead.
+// squadronMCP lists mission definitions and starts missions through MCP.
 type squadronMCP struct {
 	url   string
 	token string
@@ -37,9 +35,7 @@ func (s *squadronMCP) startMission(ctx context.Context, name string, inputs map[
 	return out.MissionID, nil
 }
 
-// callTool opens a short-lived session per call: these calls are rare (one
-// per started mission or unknown run), so holding a session open would only
-// add reconnect handling.
+// callTool opens an MCP session for the request and closes it on return.
 func (s *squadronMCP) callTool(ctx context.Context, tool string, args map[string]any) (string, error) {
 	var opts []transport.StreamableHTTPCOption
 	if s.token != "" {

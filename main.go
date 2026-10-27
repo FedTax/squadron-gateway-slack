@@ -22,10 +22,8 @@
 //	checkpoint_path = "/abs/path/to/checkpoint.json"   // default: ./.squadron-slack-gateway.json
 //	run_url         = "https://…/{mission_id}"         // links the mission name to its run
 //
-// The checkpoint file holds the latest event timestamp the gateway has
-// processed, so a restart asks squadron for everything since then and
-// transient disconnects don't drop events, plus each request's thread so
-// later posts still find it.
+// The checkpoint stores the latest processed question event time and
+// conversation records for catch-up and message routing after a restart.
 package main
 
 import "github.com/mlund01/squadron-gateway-sdk"

@@ -79,10 +79,8 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 	return nil
 }
 
-// postNotification posts a one-way mission-lifecycle notification in the
-// run's thread, or opens that thread in the notification's channel (falling
-// back to the configured default channel). No idempotency map — there is
-// nothing to track or edit.
+// postNotification replies in the mission thread's Slack conversation.
+// The first notification creates its root in the override or default channel.
 func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.NotificationRecord) error {
 	unlock := g.lockConversation(rec.ThreadID)
 	defer unlock()
@@ -164,11 +162,9 @@ type slackPostPayload struct {
 	Blocks  json.RawMessage `json:"blocks,omitempty"`
 }
 
-// postMessage renders a builtins.gateway.post payload (text + mrkdwn, Block
-// Kit blocks) plus squadron-supplied file attachments and posts it in the
-// request's thread, or opens that thread in the post's channel (falling back
-// to the configured default channel). It returns the ID of the message the
-// post created or replaced, for builtins.gateway.edit.
+// postMessage posts or replaces message content and uploads attachments
+// in the mission thread's Slack conversation. The first post creates the root
+// in the override or default channel. It returns the posted or updated message ID.
 func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) (string, error) {
 	unlock := g.lockConversation(req.ThreadID)
 	defer unlock()
@@ -200,8 +196,7 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	id := thread
 	switch {
 	case p.Root && thread != "":
-		// The top-level message is rewritten in place, so it always reads as
-		// the request's current state rather than its first.
+		// Replace the root with the latest supplied content.
 		if _, _, _, err := client.UpdateMessageContext(ctx, channel, threadTS, opts...); err != nil {
 			return "", fmt.Errorf("update request message: %w", err)
 		}
@@ -230,10 +225,8 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 	return id, nil
 }
 
-// editMessage replaces a message an earlier post returned the ID of. Only the
-// content changes: where a message sits was settled when it was posted, so
-// an edit that names a channel or root is refused rather than
-// silently ignored.
+// editMessage replaces content at the supplied message ID.
+// Channel and root overrides are rejected because an edit preserves the destination.
 func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessageRequest) error {
 	unlock := g.lockConversation(req.ThreadID)
 	defer unlock()
@@ -266,8 +259,7 @@ func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessa
 	if _, _, _, err := client.UpdateMessageContext(ctx, channel, ts, opts...); err != nil {
 		return fmt.Errorf("edit message: %w", err)
 	}
-	// An edit's files land where a post's would, in the run's thread, so they
-	// stay with the request rather than starting a new top-level message.
+	// Upload attached files into the mission thread's Slack conversation.
 	fileChannel, fileThread := channel, ts
 	if thread := g.threadForMissionThread(req.ThreadID); thread != "" {
 		fileChannel, fileThread = splitSlackThreadRef(thread)
