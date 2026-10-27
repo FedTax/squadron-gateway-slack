@@ -304,9 +304,8 @@ func messageOptions(text string, rawBlocks json.RawMessage, lines string) []slac
 	return opts
 }
 
-// uploadAttachment uploads a squadron-supplied file (already read from the
-// mission's memory/scratchpad and shipped as raw bytes) to Slack so it appears
-// as a native file. Best-effort: a failed attachment is logged, not fatal.
+// uploadAttachment uploads the supplied bytes as a native Slack file.
+// Upload failures are logged and leave the posted message intact.
 func (g *slackGateway) uploadAttachment(ctx context.Context, client *slack.Client, channel, thread string, a gatewaysdk.FileAttachment) {
 	name := a.Filename
 	if name == "" {

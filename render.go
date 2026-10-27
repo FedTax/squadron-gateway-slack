@@ -190,8 +190,7 @@ func buildMultiSelect(rec gatewaysdk.HumanInputRecord) *slack.MultiSelectBlockEl
 	)
 }
 
-// displayResponder substitutes a generic label when no responder id
-// was recorded — happens when commander resolves with auth disabled.
+// displayResponder substitutes a generic label when no responder ID is supplied.
 func displayResponder(s string) string {
 	if s == "" {
 		return "another operator"

@@ -152,13 +152,12 @@ input its `value`.
 4. **When it ends**, whatever the run posts last, and any notification from the
    mission's `notification { gateway { … } }` block (`mission_completed`,
    `mission_failed`), arrive in the same thread.
-5. **Follow-up runs.** Squadron groups related runs into a mission thread.
-   Routed missions automatically inherit that thread, and resumed runs retain
-   it, so their posts, questions and notifications share this Slack conversation
-   from the first message. To start a separate follow-up, supply the existing
-   mission thread ID as `thread_id` when calling MCP `run_mission`. Omitting it
-   starts a new mission thread with a generated UUID. See the
-   [technical reference](docs/technical-reference.md).
+5. **Follow-up runs.** The gateway keeps posts, questions and notifications with
+   the same mission thread ID in one Slack conversation. A mission thread is a
+   chain of related Squadron runs. See the
+   [technical reference](docs/technical-reference.md) for message routing and
+   [Squadron's mission thread documentation](https://github.com/mlund01/squadron/blob/main/docs/content/cli/mission.mdx#mission-threads)
+   for joining runs to a mission thread.
 
 ## Answering questions
 

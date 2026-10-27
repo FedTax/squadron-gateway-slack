@@ -33,23 +33,15 @@ posted earlier stay.
 - **Refused:** a question's message, because the gateway rewrites it itself
   when it's answered; a payload with `channel` or `root`, because an
   edit can't move a message; and an ID that isn't `<channel>/<ts>`.
-- **Not kept:** the gateway doesn't store post IDs. A later run that needs to
-  edit a message has to be given its ID, e.g. from a memory file the mission
-  writes it to.
+- **Message IDs:** retain the ID returned by a post to edit it later. The gateway
+  stores conversation roots and question IDs; other post IDs are returned only.
 
 ## How related missions share a conversation
 
-Squadron's `ThreadID` identifies a **mission thread: a chain of related mission
-runs**. Each run retains its own `MissionID` for run URLs, attribution and question
-ownership.
-
-Squadron generates a UUID when a mission starts without a supplied thread ID.
-Automatic cross-mission routing inherits it, and resuming retains it. To start a
-separate follow-up in the same conversation, pass the existing ID as
-`thread_id` to MCP `run_mission`. Its response includes `missionId` and `threadId`.
-
-Posts, edits, questions and notifications carry the mission thread ID outside
-the agent-authored payload. The gateway uses it to find one Slack conversation:
+The gateway uses `ThreadID`, which identifies a mission thread (a chain of
+related Squadron runs), to group posts, questions and notifications in one Slack
+conversation. Edits use the message ID to select a message and `ThreadID` to
+locate the shared conversation for attachments and root attribution.
 
 1. A `/squadron` start reserves a mission thread ID and supplies it to
    `run_mission`. Events for that thread wait until the gateway posts and records
@@ -59,9 +51,8 @@ the agent-authored payload. The gateway uses it to find one Slack conversation:
 3. For other starts, the first post or notification becomes the root, in its
    channel override or the configured default channel. A first question creates
    a summary root in the default channel and posts the question beneath it.
-4. `root: true` replaces the complete root content. To reuse previous
-   content, missions can keep it in a configured memory and use it to compose
-   later replacements.
+4. `root: true` replaces the complete root content with the supplied content,
+   preserving the gateway-owned mission and requester lines.
 
 Root lookup, creation and recording are serialized per mission thread, so
 concurrent first messages share a root while unrelated threads proceed
@@ -97,7 +88,7 @@ run URL still identifies the original run.
 - The Answer modal's callback ID is `sq-answer`. A choice question's Other
   button opens it with the same `__answer__` action ID. On a multi-select
   question the button's value is `multi`, and the typed answer is sent as a
-  one-item JSON array, the shape the agent expects from a multi-select.
+  one-item JSON array.
 
 ## Local development
 
