@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/slack-go/slack"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	gatewaysdk "github.com/mlund01/squadron-gateway-sdk"
+	"github.com/slack-go/slack"
 )
 
 func TestFallbackThreadTitleNamesMissionAndQuestion(t *testing.T) {
@@ -37,7 +37,12 @@ func TestRelatedRunsShareQuestionFirstConversation(t *testing.T) {
 	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{MissionID: "run-d", ThreadID: "other-chain", Payload: `{"text":"separate"}`}); err != nil {
 		t.Fatal(err)
 	}
-	got := calls()
+	var got []recordedCall
+	for _, c := range calls() {
+		if c.method == "chat.postMessage" {
+			got = append(got, c)
+		}
+	}
 	if len(got) != 5 {
 		t.Fatalf("calls: %+v", got)
 	}
@@ -57,7 +62,7 @@ func TestConcurrentFirstMessagesCreateOneRoot(t *testing.T) {
 	var calls []recordedCall
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		c := recordedCall{channel: r.Form.Get("channel"), threadTS: r.Form.Get("thread_ts")}
+		c := recordedCall{method: strings.TrimPrefix(r.URL.Path, "/"), channel: r.Form.Get("channel"), threadTS: r.Form.Get("thread_ts")}
 		mu.Lock()
 		c.ts = fmt.Sprintf("1700000000.%06d", len(calls)+1)
 		calls = append(calls, c)
@@ -103,12 +108,21 @@ func TestConcurrentFirstMessagesCreateOneRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if got := g.conversations["shared"].Missions; len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Fatalf("concurrent callers lost from list: %+v", got)
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 3 {
+	var posts []recordedCall
+	for _, c := range calls {
+		if c.method == "chat.postMessage" {
+			posts = append(posts, c)
+		}
+	}
+	if len(posts) != 3 {
 		t.Fatalf("calls: %+v", calls)
 	}
-	if calls[2].threadTS != calls[0].ts {
+	if posts[2].threadTS != posts[0].ts {
 		t.Fatalf("concurrent question created another root: %+v", calls)
 	}
 }

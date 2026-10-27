@@ -13,7 +13,7 @@ import (
 	"github.com/slack-go/slack"
 )
 
-type recordedCall struct{ method, channel, ts, threadTS, text string }
+type recordedCall struct{ method, channel, ts, threadTS, text, blocks string }
 
 // editTestGateway serves Slack's API locally, giving each new message the
 // next ts, and records every call.
@@ -30,6 +30,7 @@ func editTestGateway(t *testing.T) (*slackGateway, func() []recordedCall) {
 			ts:       r.PostForm.Get("ts"),
 			threadTS: r.PostForm.Get("thread_ts"),
 			text:     r.PostForm.Get("text"),
+			blocks:   r.PostForm.Get("blocks"),
 		}
 		if c.method == "upload" {
 			w.WriteHeader(http.StatusOK)
@@ -139,7 +140,7 @@ func TestEditUploadsItsAttachmentsIntoTheRunsThread(t *testing.T) {
 func TestEditOfARequestRootKeepsTheGatewayLines(t *testing.T) {
 	g, calls := editTestGateway(t)
 	root := slackThreadRef("CTEST", "1700000000.000009")
-	g.conversations["run-1"] = &conversation{Root: root, MissionLine: "*rate_triage* · run-1", Requester: "UTEST"}
+	g.conversations["run-1"] = &conversation{Root: root, Missions: []missionEntry{{ID: "run-1", Line: "*rate_triage* · run-1"}}, Requester: "UTEST"}
 
 	if err := g.editMessage(context.Background(), gatewaysdk.EditMessageRequest{MissionID: "run-1", ThreadID: "run-1", MessageID: root, Payload: `{"text":"Status: done"}`}); err != nil {
 		t.Fatal(err)

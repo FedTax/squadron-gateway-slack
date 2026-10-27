@@ -45,6 +45,10 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		return fmt.Errorf("slack client not initialized")
 	}
 
+	g.rememberMission(rec.ThreadID, rec.MissionID, rec.MissionName)
+	if err := g.refreshRoot(ctx, rec.ThreadID); err != nil {
+		return err
+	}
 	thread := g.threadForMissionThread(rec.ThreadID)
 	if thread == "" && rec.ThreadID != "" {
 		var err error
@@ -92,6 +96,10 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 		return fmt.Errorf("slack client not initialized")
 	}
 	body := buildNotificationBody(rec)
+	g.rememberMission(rec.ThreadID, rec.MissionID, rec.MissionName)
+	if err := g.refreshRoot(ctx, rec.ThreadID); err != nil {
+		return err
+	}
 	thread := g.threadForMissionThread(rec.ThreadID)
 	var threadTS string
 	if thread != "" {
@@ -106,10 +114,12 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 			nil, nil,
 		),
 	}
-	opts := []slack.MsgOption{
-		slack.MsgOptionText(body, false),
-		slack.MsgOptionBlocks(blocks...),
+	rawBlocks, _ := json.Marshal(blocks)
+	lines := ""
+	if thread == "" {
+		lines = g.threadLines(rec.ThreadID)
 	}
+	opts := messageOptions(body, rawBlocks, lines)
 	if threadTS != "" {
 		opts = append(opts, slack.MsgOptionTS(threadTS))
 	}
@@ -119,6 +129,7 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 	}
 	if thread == "" {
 		g.rememberThread(rec.ThreadID, slackThreadRef(posted, ts))
+		g.rememberRootContent(slackThreadRef(posted, ts), body, rawBlocks)
 	}
 	return nil
 }
@@ -187,9 +198,12 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
 	}
 
+	g.rememberMission(req.ThreadID, req.MissionID, "")
 	var lines string
-	if p.Root {
-		lines = g.requestLines(thread)
+	if p.Root || thread == "" {
+		lines = g.threadLines(req.ThreadID)
+	} else if err := g.refreshRoot(ctx, req.ThreadID); err != nil {
+		return "", err
 	}
 	opts := messageOptions(p.Text, p.Blocks, lines)
 
@@ -219,6 +233,9 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		id = thread
 	}
 
+	if id == thread {
+		g.rememberRootContent(thread, p.Text, p.Blocks)
+	}
 	for _, a := range req.Attachments {
 		g.uploadAttachment(ctx, client, channel, threadTS, a)
 	}
@@ -253,12 +270,19 @@ func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessa
 	if question {
 		return fmt.Errorf("message %s is a question; it changes when it's answered", req.MessageID)
 	}
+	g.rememberMission(req.ThreadID, req.MissionID, "")
+	if req.MessageID != g.threadForMissionThread(req.ThreadID) {
+		if err := g.refreshRoot(ctx, req.ThreadID); err != nil {
+			return err
+		}
+	}
 	// A request's top-level message keeps the gateway's lines through an
 	// edit, as it does through a root post.
 	opts := messageOptions(p.Text, p.Blocks, g.requestLines(req.MessageID))
 	if _, _, _, err := client.UpdateMessageContext(ctx, channel, ts, opts...); err != nil {
 		return fmt.Errorf("edit message: %w", err)
 	}
+	g.rememberRootContent(req.MessageID, p.Text, p.Blocks)
 	// Upload attached files into the mission thread's Slack conversation.
 	fileChannel, fileThread := channel, ts
 	if thread := g.threadForMissionThread(req.ThreadID); thread != "" {
@@ -292,7 +316,10 @@ func messageOptions(text string, rawBlocks json.RawMessage, lines string) []slac
 		}
 	}
 	if lines != "" {
-		text += "\n" + lines
+		if text != "" {
+			text += "\n"
+		}
+		text += lines
 		if blocks != nil {
 			blocks = append(blocks, slack.NewContextBlock("", slack.NewTextBlockObject(slack.MarkdownType, lines, false, false)))
 		}

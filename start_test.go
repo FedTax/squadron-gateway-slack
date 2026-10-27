@@ -270,7 +270,7 @@ func TestChannelOpensTheThreadOnlyWhenNoneExists(t *testing.T) {
 		t.Errorf("later posts must follow the thread to its channel; got %+v", got)
 	}
 	post("run-2", `{"text":"Fixing","channel":"COTHER"}`)
-	if got := calls[2]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
+	if got := calls[len(calls)-1]; got != (call{channel: "CSECOND", threadTS: "1700000000.000003"}) {
 		t.Errorf("an existing thread must win over channel; got %+v", got)
 	}
 }

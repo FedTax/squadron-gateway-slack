@@ -11,9 +11,12 @@
 
 Files a mission attaches to the post are uploaded into the same thread.
 
-On a `root` post the gateway appends its own lines after `text`: the mission
-line and `Requester: <@user>`, for requests started from `/squadron`. With
-`blocks`, they're added as a final `context` block.
+The gateway appends its observed run list after the root's `text`, plus
+`Requester: <@user>` for starts from `/squadron`. With `blocks`, these appear
+in a final `context` block. Each mission ID is listed once, in first-seen order.
+A new run's post, edit, question or notification refreshes the list while
+preserving the current root body. Run links use `run_url`; labels use the
+mission name when supplied, otherwise the run ID.
 
 Every post returns the ID of the message it created or replaced, as
 `<channel>/<ts>`: the new top-level message, the reply, or the rewritten
@@ -28,8 +31,8 @@ replace the whole message, through `chat.update` on that channel and `ts`.
 Slack conversation, or under the edited message if there is none. They're added; files
 posted earlier stay.
 
-- **The request's top-level message:** a `/squadron` start's mission and
-  requester lines are added back, as on a `root` post.
+- **The request's top-level message:** the run list and requester are added
+  back, as on a `root` post.
 - **Refused:** a question's message, because the gateway rewrites it itself
   when it's answered; a payload with `channel` or `root`, because an
   edit can't move a message; and an ID that isn't `<channel>/<ts>`.
@@ -52,7 +55,7 @@ locate the shared conversation for attachments and root attribution.
    channel override or the configured default channel. A first question creates
    a summary root in the default channel and posts the question beneath it.
 4. `root: true` replaces the complete root content with the supplied content,
-   preserving the gateway-owned mission and requester lines.
+   preserving the run list and requester.
 
 Root lookup, creation and recording are serialized per mission thread, so
 concurrent first messages share a root while unrelated threads proceed
@@ -70,12 +73,12 @@ removed.
 | State | Purpose |
 | ----- | ------- |
 | `latest` | Newest processed question event time, used for catch-up. Only moves forward. |
-| `conversations` | Mission thread ID → Slack root reference and optional starter mission/requester lines. Keeps related runs in the same conversation after gateway restarts and preserves attribution on root replacements. |
+| `conversations` | Mission thread ID → Slack root reference, body text/blocks, observed run IDs and formatted lines, optional requester, and pending footer update. Preserves the conversation and its run list across restarts. |
 | `messages` | Tool call ID → posted question's channel and timestamp. Prevents duplicate questions within the process and locates them for answer edits. In memory only; questions posted before restart cannot be edited from this map. |
 
-Only conversations started through `/squadron` have gateway-owned mission and
-requester lines. Root replacements preserve these lines; the mission ID in the
-run URL still identifies the original run.
+Only conversations started through `/squadron` have a requester line. Each run
+link identifies that individual run. If a footer update fails, the gateway
+retains it as pending and retries on the next message for that mission thread.
 
 ## Slack IDs
 

@@ -140,11 +140,11 @@ input its `value`.
      root with the question beneath it. It goes in the channel the mission names, or in the
      default channel if it names none. A question can't name a channel, so a
      run whose first message is a question opens in the default channel.
-2. **The top-level message.** For a `/squadron` start, the gateway puts two
-   lines on it: the mission name, linked to the run if `run_url` is set
-   (otherwise the name and run id), and `Requester: @you`. For a start in
-   Squadron, it's the run's first message. As the work moves on, the mission
-   can replace the message's content. The gateway keeps its lines on it.
+2. **The top-level message.** The gateway appends a list of runs it has seen in
+   the conversation, with each run listed once. Links use `run_url` when set;
+   labels use the mission name when supplied, otherwise the run ID. Starts from
+   `/squadron` also show `Requester: @you`. New runs refresh the list while
+   preserving the message body, and root replacements keep the list and requester.
 3. **While it runs**, the run's posts and questions are replies in that
    message's thread. The mission can edit any of its own posts later, e.g. to
    tick off a step, but not a question. Answer questions there (see
