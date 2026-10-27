@@ -8,6 +8,8 @@ import "strings"
 //   sq::<tool_call_id>::<choice>     button click — choice is the value
 //   sq::<tool_call_id>::__select__   multi-select — values arrive in
 //                                                   the action payload
+//   sq::<tool_call_id>::__answer__   free-text Answer button — opens
+//                                                   the answer modal
 //
 // Slack caps action_id at 255 bytes, which gives us comfortably more
 // headroom than Discord's 100 — but we still defensively truncate so a
@@ -17,6 +19,7 @@ const (
 	customIDSep      = "::"
 	customIDPrefix   = "sq"
 	selectMenuMarker = "__select__"
+	answerMarker     = "__answer__"
 	customIDMaxLen   = 255
 )
 
@@ -43,6 +46,18 @@ func encodeSelectMenuCustomID(toolCallID string) string {
 func decodeSelectMenuCustomID(s string) (toolCallID string, ok bool) {
 	tc, marker, decoded := decodeCustomID(s)
 	if !decoded || marker != selectMenuMarker {
+		return "", false
+	}
+	return tc, true
+}
+
+func encodeAnswerCustomID(toolCallID string) string {
+	return customIDPrefix + customIDSep + toolCallID + customIDSep + answerMarker
+}
+
+func decodeAnswerCustomID(s string) (toolCallID string, ok bool) {
+	tc, marker, decoded := decodeCustomID(s)
+	if !decoded || marker != answerMarker {
 		return "", false
 	}
 	return tc, true

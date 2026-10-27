@@ -21,25 +21,55 @@ func buildFallbackText(rec gatewaysdk.HumanInputRecord) string {
 // Kit blocks. Returned slice is ready to pass to MsgOptionBlocks.
 //
 // Layout depends on picker shape:
-//   - free-text → one section block with the body
-//   - single-choice → section block + actions block of buttons
+//   - free-text → section block + an Answer button that opens a modal
+//   - single-choice → section block + actions block of buttons, then Other
 //   - multi-select → section block whose accessory is the multi_static_select
 //     element (Slack rejects multi-selects inside actions blocks; they're
-//     only valid as section accessories or in input blocks).
-func buildBlocks(rec gatewaysdk.HumanInputRecord) []slack.Block {
-	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec), false, false)
+//     only valid as section accessories or in input blocks), then an
+//     actions block with Other
+//
+// Every choice question includes an Other button for a typed answer.
+func buildBlocks(rec gatewaysdk.HumanInputRecord, topLevel bool) []slack.Block {
+	bodyText := slack.NewTextBlockObject(slack.MarkdownType, buildMessageBody(rec, topLevel), false, false)
 
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		return []slack.Block{
 			slack.NewSectionBlock(bodyText, nil, slack.NewAccessory(buildMultiSelect(rec))),
+			slack.NewActionBlock("sq-answer-"+rec.ToolCallID, buildAnswerButton(rec, "Other…")),
 		}
 	}
 
 	blocks := []slack.Block{slack.NewSectionBlock(bodyText, nil, nil)}
 	if len(rec.Choices) > 0 {
 		blocks = append(blocks, buildButtonsBlock(rec))
+	} else {
+		blocks = append(blocks, slack.NewActionBlock("sq-answer-"+rec.ToolCallID, buildAnswerButton(rec, "Answer")))
 	}
 	return blocks
+}
+
+// buildAnswerButton associates the answer modal with this question.
+// Its value preserves multi-select mode for encoding the submitted answer.
+func buildAnswerButton(rec gatewaysdk.HumanInputRecord, label string) *slack.ButtonBlockElement {
+	value := ""
+	if rec.MultiSelect {
+		value = multiSelectValue
+	}
+	return slack.NewButtonBlockElement(
+		encodeAnswerCustomID(rec.ToolCallID),
+		value,
+		slack.NewTextBlockObject(slack.PlainTextType, label, false, false),
+	)
+}
+
+// fallbackThreadTitle combines the mission name and question summary
+// so a question-first conversation has a searchable root message.
+func fallbackThreadTitle(rec gatewaysdk.HumanInputRecord) string {
+	name := rec.MissionName
+	if name == "" {
+		name = "Mission run " + rec.MissionID
+	}
+	return "*" + name + "*: " + buildFallbackText(rec)
 }
 
 // buildMessageBody renders the question + context as Slack mrkdwn.
@@ -48,9 +78,12 @@ func buildBlocks(rec gatewaysdk.HumanInputRecord) []slack.Block {
 //   - italics:       _text_
 //   - inline code:   `text`
 //   - strikethrough: ~text~    (single tildes)
-func buildMessageBody(rec gatewaysdk.HumanInputRecord) string {
+//
+// The summary heads a question only when it's posted top-level; in a
+// request thread the question itself is enough.
+func buildMessageBody(rec gatewaysdk.HumanInputRecord, topLevel bool) string {
 	var b strings.Builder
-	if rec.ShortSummary != "" {
+	if topLevel && rec.ShortSummary != "" {
 		b.WriteString("*")
 		b.WriteString(rec.ShortSummary)
 		b.WriteString("*\n")
@@ -59,7 +92,7 @@ func buildMessageBody(rec gatewaysdk.HumanInputRecord) string {
 	if rec.MultiSelect && len(rec.Choices) > 0 {
 		b.WriteString("\n_Pick one or more from the dropdown below._")
 	} else if len(rec.Choices) == 0 {
-		b.WriteString("\n_Reply in the thread to answer._")
+		b.WriteString("\n_Click Answer to reply._")
 	}
 	if rec.AdditionalContext != "" {
 		b.WriteString("\n\n_Context_\n")
@@ -79,15 +112,10 @@ func buildMessageBody(rec gatewaysdk.HumanInputRecord) string {
 
 func buildResolvedBody(rec gatewaysdk.HumanInputRecord) string {
 	var b strings.Builder
-	if rec.ShortSummary != "" {
-		b.WriteString("~*")
-		b.WriteString(rec.ShortSummary)
-		b.WriteString("*~\n")
-	} else {
-		b.WriteString("~")
-		b.WriteString(truncate(rec.Question, 200))
-		b.WriteString("~\n")
-	}
+	// Keep the question alongside its answer so the resolved message retains context.
+	b.WriteString("~")
+	b.WriteString(rec.Question)
+	b.WriteString("~\n")
 	b.WriteString("✅ ")
 	b.WriteString(formatResolvedResponse(rec))
 	if rec.ResponderUserID != "" {
@@ -120,9 +148,10 @@ const (
 )
 
 func buildButtonsBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
-	elements := make([]slack.BlockElement, 0, len(rec.Choices))
+	elements := make([]slack.BlockElement, 0, len(rec.Choices)+1)
 	for i, choice := range rec.Choices {
-		if i >= maxActionElements {
+		// One element is kept for Other.
+		if i >= maxActionElements-1 {
 			break
 		}
 		label := truncate(choice, maxButtonLabelBytes)
@@ -133,6 +162,7 @@ func buildButtonsBlock(rec gatewaysdk.HumanInputRecord) slack.Block {
 		)
 		elements = append(elements, btn)
 	}
+	elements = append(elements, buildAnswerButton(rec, "Other…"))
 	return slack.NewActionBlock("sq-actions-"+rec.ToolCallID, elements...)
 }
 
@@ -160,8 +190,7 @@ func buildMultiSelect(rec gatewaysdk.HumanInputRecord) *slack.MultiSelectBlockEl
 	)
 }
 
-// displayResponder substitutes a generic label when no responder id
-// was recorded — happens when commander resolves with auth disabled.
+// displayResponder substitutes a generic label when no responder ID is supplied.
 func displayResponder(s string) string {
 	if s == "" {
 		return "another operator"

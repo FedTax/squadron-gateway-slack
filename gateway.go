@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	gatewaysdk "github.com/mlund01/squadron-gateway-sdk"
 	"github.com/slack-go/slack"
@@ -21,12 +22,18 @@ type slackGateway struct {
 	channelID string
 	botUserID string
 
-	// tool_call_id → posted message ts, so we can edit the
-	// message when the request resolves (regardless of which surface
-	// resolved it).
-	messages map[string]string
+	// tool_call_id → posted message, so we can edit the message when the
+	// request resolves (regardless of which surface resolved it).
+	messages map[string]postedMessage
+
+	// conversations is keyed by Squadron mission thread: a chain of related runs.
+	conversations map[string]*conversation
+
+	// nil when mcp_url isn't set: missions cannot be started from Slack.
+	mcp *squadronMCP
 
 	checkpointPath string
+	latest         time.Time
 
 	// cancels the socket-mode run loop on Shutdown.
 	cancel context.CancelFunc
@@ -34,7 +41,10 @@ type slackGateway struct {
 }
 
 func newSlackGateway() *slackGateway {
-	return &slackGateway{messages: map[string]string{}}
+	return &slackGateway{
+		messages:      map[string]postedMessage{},
+		conversations: map[string]*conversation{},
+	}
 }
 
 func (g *slackGateway) Configure(ctx context.Context, settings map[string]string, api gatewaysdk.SquadronAPI) error {
@@ -66,6 +76,10 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 	if g.checkpointPath == "" {
 		g.checkpointPath = ".squadron-slack-gateway.json"
 	}
+	if mcpURL := strings.TrimSpace(settings["mcp_url"]); mcpURL != "" {
+		g.mcp = &squadronMCP{url: mcpURL, token: strings.TrimSpace(settings["mcp_token"])}
+	}
+	g.loadCheckpoint()
 
 	api2 := slack.New(botToken, slack.OptionAppLevelToken(appToken))
 
@@ -128,8 +142,13 @@ func (g *slackGateway) OnNotification(ctx context.Context, rec gatewaysdk.Notifi
 	return g.postNotification(ctx, rec)
 }
 
-func (g *slackGateway) PostMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) error {
-	return g.postMessage(ctx, req.Payload, req.Attachments)
+func (g *slackGateway) PostMessage(ctx context.Context, req gatewaysdk.PostMessageRequest) (gatewaysdk.PostMessageResponse, error) {
+	id, err := g.postMessage(ctx, req)
+	return gatewaysdk.PostMessageResponse{MessageID: id}, err
+}
+
+func (g *slackGateway) EditMessage(ctx context.Context, req gatewaysdk.EditMessageRequest) error {
+	return g.editMessage(ctx, req)
 }
 
 func (g *slackGateway) MessageToolSpec(ctx context.Context) (gatewaysdk.MessageToolSpec, error) {
@@ -156,8 +175,11 @@ func (g *slackGateway) Shutdown(ctx context.Context) error {
 // live-event handlers. Per-row failures are logged so one bad row
 // doesn't block the rest.
 func (g *slackGateway) catchUp(ctx context.Context) error {
+	g.mu.Lock()
+	since := g.latest
+	g.mu.Unlock()
 	rows, _, err := g.api.ListHumanInputs(ctx, gatewaysdk.HumanInputFilter{
-		Since:       g.readCheckpoint(),
+		Since:       since,
 		OldestFirst: true,
 		Limit:       200,
 	})

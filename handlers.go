@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 )
 
@@ -28,20 +28,23 @@ func (g *slackGateway) runSocketEvents(ctx context.Context) {
 				if !ok {
 					continue
 				}
-				if evt.Request != nil {
-					g.socket.Ack(*evt.Request)
-				}
-				g.onInteraction(ctx, cb)
-			case socketmode.EventTypeEventsAPI:
-				eapi, ok := evt.Data.(slackevents.EventsAPIEvent)
-				if !ok {
-					log.Printf("events-api evt arrived but Data was %T", evt.Data)
+				if cb.Type == slack.InteractionTypeViewSubmission && cb.View.CallbackID == startCallbackID {
+					g.onStartSubmitted(ctx, evt.Request, cb)
 					continue
 				}
 				if evt.Request != nil {
 					g.socket.Ack(*evt.Request)
 				}
-				g.onEventsAPI(ctx, eapi)
+				g.onInteraction(ctx, cb)
+			case socketmode.EventTypeSlashCommand:
+				cmd, ok := evt.Data.(slack.SlashCommand)
+				if !ok {
+					continue
+				}
+				if evt.Request != nil {
+					g.socket.Ack(*evt.Request)
+				}
+				g.onSlashCommand(ctx, cmd)
 			case socketmode.EventTypeConnecting, socketmode.EventTypeConnected, socketmode.EventTypeHello:
 				// status events — nothing to do
 			case socketmode.EventTypeErrorBadMessage, socketmode.EventTypeErrorWriteFailed,
@@ -52,10 +55,20 @@ func (g *slackGateway) runSocketEvents(ctx context.Context) {
 	}
 }
 
-// onInteraction routes a Block Kit action (button click or
-// multi-select submit) into ResolveHumanInput.
+// onInteraction routes a Block Kit action (button click or multi-select
+// submit) into ResolveHumanInput, opens the answer modal for a free-text
+// question, and resolves the question when that modal is submitted.
 func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCallback) {
-	if cb.Type != slack.InteractionTypeBlockActions {
+	switch cb.Type {
+	case slack.InteractionTypeViewSubmission:
+		toolCallID, answer, ok := answerFromSubmission(cb)
+		if !ok {
+			return
+		}
+		g.resolve(ctx, toolCallID, answer, slackResponderID(cb), g.questionChannel(toolCallID), cb.User.ID)
+		return
+	case slack.InteractionTypeBlockActions:
+	default:
 		return
 	}
 	if len(cb.ActionCallback.BlockActions) == 0 {
@@ -63,22 +76,38 @@ func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCa
 	}
 	action := cb.ActionCallback.BlockActions[0]
 
+	if action.ActionID == startMissionAction {
+		g.onMissionPicked(ctx, cb, action.SelectedOption.Value)
+		return
+	}
+
+	if toolCallID, ok := decodeAnswerCustomID(action.ActionID); ok {
+		form := answerForm{ToolCallID: toolCallID, MultiSelect: action.Value == multiSelectValue}
+		if _, err := g.client.OpenViewContext(ctx, cb.TriggerID, answerModal(form)); err != nil {
+			log.Printf("open answer modal: %v", err)
+		}
+		return
+	}
+
 	toolCallID, response, ok := decodeInteractionResponse(action)
 	if !ok {
 		return
 	}
+	g.resolve(ctx, toolCallID, response, slackResponderID(cb), cb.Channel.ID, cb.User.ID)
+}
 
-	res, err := g.api.ResolveHumanInput(ctx, toolCallID, response, slackResponderID(cb))
+// resolve sends an answer to squadron. On NotFound it surfaces a transient
+// ephemeral note so the operator knows their answer didn't land. Other
+// outcomes are confirmed by the message edit flowing through
+// OnHumanInputResolved.
+func (g *slackGateway) resolve(ctx context.Context, toolCallID, response, responder, channel, userID string) {
+	res, err := g.api.ResolveHumanInput(ctx, toolCallID, response, responder)
 	if err != nil {
-		log.Printf("resolve from interaction: %v", err)
+		log.Printf("resolve %s: %v", toolCallID, err)
 		return
 	}
-
-	// On NotFound surface a transient ephemeral note so the operator
-	// knows their click didn't land. Other outcomes are confirmed by
-	// the message edit flowing through OnHumanInputResolved.
 	if res.NotFound {
-		_, err := g.client.PostEphemeralContext(ctx, cb.Channel.ID, cb.User.ID,
+		_, err := g.client.PostEphemeralContext(ctx, channel, userID,
 			slack.MsgOptionText("That request is no longer in squadron's store — the row may have been trimmed.", false))
 		if err != nil {
 			log.Printf("ephemeral not-found notice: %v", err)
@@ -88,7 +117,8 @@ func (g *slackGateway) onInteraction(ctx context.Context, cb slack.InteractionCa
 
 // decodeInteractionResponse maps a Block Kit BlockAction into the
 // (toolCallID, response) pair we send to squadron. Returns ok=false
-// for any action_id that didn't originate here. Multi-select values
+// for any action_id that didn't originate here, and for the Answer
+// button, which opens a modal instead of answering. Multi-select values
 // are JSON-encoded so the agent gets a canonical array string instead
 // of a Go-printed slice.
 func decodeInteractionResponse(action *slack.BlockAction) (toolCallID, response string, ok bool) {
@@ -107,70 +137,66 @@ func decodeInteractionResponse(action *slack.BlockAction) (toolCallID, response 
 		}
 		return tc, string(encoded), true
 	}
-	if tc, choice, ok := decodeCustomID(action.ActionID); ok {
+	if tc, choice, ok := decodeCustomID(action.ActionID); ok && choice != answerMarker {
 		return tc, choice, true
 	}
 	return "", "", false
 }
 
-// onEventsAPI handles the message-event subset we care about: a thread
-// reply to one of our posted question messages.
-func (g *slackGateway) onEventsAPI(ctx context.Context, evt slackevents.EventsAPIEvent) {
-	if evt.Type != slackevents.CallbackEvent {
-		return
-	}
-	msg, ok := evt.InnerEvent.Data.(*slackevents.MessageEvent)
-	if !ok {
-		return
-	}
-	g.handleMessage(ctx, msg)
+const (
+	answerCallbackID = "sq-answer"
+	answerBlockID    = "sq-answer-block"
+	answerActionID   = "sq-answer-text"
+	multiSelectValue = "multi"
+)
+
+// answerForm preserves the question ID and answer format across modal submission.
+type answerForm struct {
+	ToolCallID  string `json:"tool_call_id"`
+	MultiSelect bool   `json:"multi_select,omitempty"`
 }
 
-func (g *slackGateway) handleMessage(ctx context.Context, msg *slackevents.MessageEvent) {
-	if msg == nil {
-		return
-	}
-	// Drop bot messages, edits, and channel mismatches silently — these
-	// fire on every channel the bot is a member of and would flood the
-	// log. Only thread replies in our channel that don't match a
-	// tracked question get a diagnostic line, since that's the rare
-	// case where an operator's reply silently does nothing and they'll
-	// want to know why.
-	if msg.SubType != "" {
-		return
-	}
-	if msg.BotID != "" || msg.User == "" || msg.User == g.botUserID {
-		return
-	}
-	if msg.Channel != g.channelID {
-		return
-	}
-	if msg.ThreadTimeStamp == "" {
-		return
-	}
-
-	g.mu.Lock()
-	matched := lookupToolCallByMessageTS(g.messages, msg.ThreadTimeStamp)
-	known := len(g.messages)
-	g.mu.Unlock()
-	if matched == "" {
-		log.Printf("thread reply on ts=%s did not match any tracked question (%d open) — likely a reply on a question posted before this gateway started", msg.ThreadTimeStamp, known)
-		return
-	}
-
-	if _, err := g.api.ResolveHumanInput(ctx, matched, msg.Text, "slack:"+msg.User); err != nil {
-		log.Printf("resolve from thread reply: %v", err)
+func answerModal(form answerForm) slack.ModalViewRequest {
+	input := slack.NewPlainTextInputBlockElement(nil, answerActionID)
+	input.Multiline = true
+	metadata, _ := json.Marshal(form)
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		CallbackID:      answerCallbackID,
+		PrivateMetadata: string(metadata),
+		Title:           slack.NewTextBlockObject(slack.PlainTextType, "Answer", false, false),
+		Submit:          slack.NewTextBlockObject(slack.PlainTextType, "Send", false, false),
+		Close:           slack.NewTextBlockObject(slack.PlainTextType, "Cancel", false, false),
+		Blocks: slack.Blocks{BlockSet: []slack.Block{
+			slack.NewInputBlock(answerBlockID,
+				slack.NewTextBlockObject(slack.PlainTextType, "Your answer", false, false),
+				nil, input),
+		}},
 	}
 }
 
-// lookupToolCallByMessageTS — caller holds g.mu.
-func lookupToolCallByMessageTS(messages map[string]string, ts string) string {
-	for toolCallID, msgTS := range messages {
-		if msgTS == ts {
-			return toolCallID
+// answerFromSubmission reads a typed answer and encodes multi-select answers
+// as a one-item JSON array.
+func answerFromSubmission(cb slack.InteractionCallback) (toolCallID, answer string, ok bool) {
+	if cb.View.CallbackID != answerCallbackID || cb.View.State == nil {
+		return "", "", false
+	}
+	var form answerForm
+	if json.Unmarshal([]byte(cb.View.PrivateMetadata), &form) != nil || form.ToolCallID == "" {
+		return "", "", false
+	}
+	answer = strings.TrimSpace(cb.View.State.Values[answerBlockID][answerActionID].Value)
+	if answer == "" {
+		return "", "", false
+	}
+	if form.MultiSelect {
+		encoded, err := json.Marshal([]string{answer})
+		if err != nil {
+			return "", "", false
 		}
+		answer = string(encoded)
 	}
-	return ""
+	return form.ToolCallID, answer, true
 }
 
 // slackResponderID prefers the user's display name when present;

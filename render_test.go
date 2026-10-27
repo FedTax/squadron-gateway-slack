@@ -79,17 +79,28 @@ func TestBuildMessageBody(t *testing.T) {
 	cases := []struct {
 		name        string
 		rec         gatewaysdk.HumanInputRecord
+		topLevel    bool
 		wantContain []string
 		wantOmit    []string
 	}{
 		{
-			name: "short summary becomes the bold title (single asterisks for slack mrkdwn)",
+			name: "top-level: short summary becomes the bold title (single asterisks for slack mrkdwn)",
 			rec: gatewaysdk.HumanInputRecord{
 				ShortSummary: "Vibe?",
 				Question:     "Pick a vibe.",
 			},
+			topLevel:    true,
 			wantContain: []string{"*Vibe?*", "Pick a vibe."},
 			wantOmit:    []string{"**Vibe?**"},
+		},
+		{
+			name: "in a thread: no summary title",
+			rec: gatewaysdk.HumanInputRecord{
+				ShortSummary: "Vibe?",
+				Question:     "Pick a vibe.",
+			},
+			wantContain: []string{"Pick a vibe."},
+			wantOmit:    []string{"Vibe?"},
 		},
 		{
 			name: "multi-select adds the dropdown hint",
@@ -99,7 +110,7 @@ func TestBuildMessageBody(t *testing.T) {
 				MultiSelect: true,
 			},
 			wantContain: []string{"Pick one or more from the dropdown"},
-			wantOmit:    []string{"Reply in the thread"},
+			wantOmit:    []string{"Click Answer"},
 		},
 		{
 			name: "single-select does NOT add the dropdown hint",
@@ -107,14 +118,14 @@ func TestBuildMessageBody(t *testing.T) {
 				Question: "Pick one.",
 				Choices:  []string{"A", "B"},
 			},
-			wantOmit: []string{"dropdown", "Reply in the thread"},
+			wantOmit: []string{"dropdown", "Click Answer"},
 		},
 		{
-			name: "free-text (no choices) prompts a thread reply",
+			name: "free-text (no choices) prompts the Answer button",
 			rec: gatewaysdk.HumanInputRecord{
 				Question: "What do you think?",
 			},
-			wantContain: []string{"Reply in the thread"},
+			wantContain: []string{"Click Answer"},
 		},
 		{
 			name: "additional context renders under a Context header",
@@ -145,7 +156,7 @@ func TestBuildMessageBody(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			body := buildMessageBody(tc.rec)
+			body := buildMessageBody(tc.rec, tc.topLevel)
 			for _, sub := range tc.wantContain {
 				if !strings.Contains(body, sub) {
 					t.Errorf("body missing %q\nfull body:\n%s", sub, body)
@@ -169,7 +180,7 @@ func TestBuildResolvedBodyStrikesThroughOriginal(t *testing.T) {
 	})
 	// Slack mrkdwn uses single tildes for strikethrough; ensure we
 	// don't emit Discord-style double tildes.
-	for _, want := range []string{"~*Vibe?*~", "✅", "Relaxed", "slack:alice"} {
+	for _, want := range []string{"~Pick a vibe.~", "✅", "Relaxed", "slack:alice"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("resolved body missing %q\nfull body:\n%s", want, body)
 		}
@@ -193,20 +204,27 @@ func TestBuildResolvedBodyExpandsMultiSelect(t *testing.T) {
 	}
 }
 
-func TestBuildBlocksFreeTextHasNoInteractiveBlock(t *testing.T) {
+func TestBuildBlocksFreeTextHasAnswerButton(t *testing.T) {
 	blocks := buildBlocks(gatewaysdk.HumanInputRecord{
 		ToolCallID: "tc",
 		Question:   "What do you think?",
-	})
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block (section only), got %d", len(blocks))
+	}, false)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks (section + Answer button), got %d", len(blocks))
 	}
-	section, ok := blocks[0].(*slack.SectionBlock)
+	actions, ok := blocks[1].(*slack.ActionBlock)
 	if !ok {
-		t.Fatalf("expected SectionBlock, got %T", blocks[0])
+		t.Fatalf("expected ActionBlock, got %T", blocks[1])
 	}
-	if section.Accessory != nil {
-		t.Errorf("free-text section should have no accessory, got %+v", section.Accessory)
+	if len(actions.Elements.ElementSet) != 1 {
+		t.Fatalf("expected 1 button, got %d", len(actions.Elements.ElementSet))
+	}
+	btn, ok := actions.Elements.ElementSet[0].(*slack.ButtonBlockElement)
+	if !ok {
+		t.Fatalf("expected ButtonBlockElement, got %T", actions.Elements.ElementSet[0])
+	}
+	if tc, ok := decodeAnswerCustomID(btn.ActionID); !ok || tc != "tc" {
+		t.Errorf("Answer button action_id %q must decode to tc, got %q ok=%v", btn.ActionID, tc, ok)
 	}
 }
 
@@ -215,7 +233,7 @@ func TestBuildBlocksSingleSelectUsesButtons(t *testing.T) {
 		ToolCallID: "tc-1",
 		Question:   "Pick one.",
 		Choices:    []string{"A", "B", "C"},
-	})
+	}, false)
 	// section + actions = 2 blocks
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2 blocks (section + actions), got %d", len(blocks))
@@ -224,13 +242,17 @@ func TestBuildBlocksSingleSelectUsesButtons(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ActionBlock, got %T", blocks[1])
 	}
-	if got := len(actions.Elements.ElementSet); got != 3 {
-		t.Fatalf("expected 3 buttons, got %d", got)
+	if got := len(actions.Elements.ElementSet); got != 4 {
+		t.Fatalf("expected 3 choice buttons + Other, got %d", got)
 	}
 	for i, el := range actions.Elements.ElementSet {
 		if _, ok := el.(*slack.ButtonBlockElement); !ok {
 			t.Errorf("element %d is %T, want *slack.ButtonBlockElement", i, el)
 		}
+	}
+	other := actions.Elements.ElementSet[3].(*slack.ButtonBlockElement)
+	if tc, ok := decodeAnswerCustomID(other.ActionID); !ok || tc != "tc-1" || other.Value != "" {
+		t.Errorf("last button must be Other, opening the answer modal; got action_id=%q value=%q", other.ActionID, other.Value)
 	}
 }
 
@@ -243,9 +265,13 @@ func TestBuildBlocksMultiSelectIsSectionAccessory(t *testing.T) {
 		Question:    "Pick any.",
 		Choices:     []string{"A", "B", "C"},
 		MultiSelect: true,
-	})
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block (section with accessory), got %d", len(blocks))
+	}, false)
+	if len(blocks) != 2 {
+		t.Fatalf("expected section with accessory + Other, got %d blocks", len(blocks))
+	}
+	other := blocks[1].(*slack.ActionBlock).Elements.ElementSet[0].(*slack.ButtonBlockElement)
+	if tc, ok := decodeAnswerCustomID(other.ActionID); !ok || tc != "tc-1" || other.Value != multiSelectValue {
+		t.Errorf("Other must open the answer modal marked multi-select; got action_id=%q value=%q", other.ActionID, other.Value)
 	}
 	section, ok := blocks[0].(*slack.SectionBlock)
 	if !ok {
@@ -277,7 +303,7 @@ func TestBuildButtonsBlockCapsAt25Buttons(t *testing.T) {
 	})
 	actions := block.(*slack.ActionBlock)
 	if got := len(actions.Elements.ElementSet); got != maxActionElements {
-		t.Errorf("expected exactly %d buttons (Slack action-element cap), got %d", maxActionElements, got)
+		t.Errorf("expected exactly %d buttons, Other included (Slack action-element cap), got %d", maxActionElements, got)
 	}
 }
 
