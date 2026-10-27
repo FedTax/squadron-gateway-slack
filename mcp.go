@@ -17,22 +17,25 @@ type squadronMCP struct {
 	token string
 }
 
-// startMission calls run_mission and returns the new mission id.
-func (s *squadronMCP) startMission(ctx context.Context, name string, inputs map[string]any, missionThreadID string) (string, error) {
+type startedMission struct {
+	MissionID string `json:"missionId"`
+	RunURL    string `json:"runUrl"`
+}
+
+// startMission returns the identity and link supplied for the new run.
+func (s *squadronMCP) startMission(ctx context.Context, name string, inputs map[string]any, missionThreadID string) (startedMission, error) {
+	var out startedMission
 	text, err := s.callTool(ctx, "run_mission", map[string]any{"name": name, "inputs": inputs, "thread_id": missionThreadID})
 	if err != nil {
-		return "", err
-	}
-	var out struct {
-		MissionID string `json:"missionId"`
+		return out, err
 	}
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		return "", fmt.Errorf("run_mission result: %w", err)
+		return out, fmt.Errorf("run_mission result: %w", err)
 	}
 	if out.MissionID == "" {
-		return "", fmt.Errorf("run_mission returned no mission id")
+		return out, fmt.Errorf("run_mission returned no mission id")
 	}
-	return out.MissionID, nil
+	return out, nil
 }
 
 // callTool opens an MCP session for the request and closes it on return.

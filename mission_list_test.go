@@ -16,21 +16,20 @@ import (
 
 func TestMissionListPreservesRootAcrossEditsAndRestart(t *testing.T) {
 	g, calls := editTestGateway(t)
-	g.runURL = "https://example.test/runs/{mission_id}"
 	g.checkpointPath = filepath.Join(t.TempDir(), "checkpoint.json")
 	ctx := context.Background()
-	root, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "a", Payload: `{"text":"Original","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Original block"}}]}`})
+	root, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "a", RunURL: "https://example.test/runs/a", Payload: `{"text":"Original","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Original block"}}]}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	g.rememberRequest("chain", root, "U1")
-	if err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{ThreadID: "chain", MissionID: "b", MessageID: root, Payload: `{"text":"Updated","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Updated block"}}]}`}); err != nil {
+	if err := g.editMessage(ctx, gatewaysdk.EditMessageRequest{ThreadID: "chain", MissionID: "b", RunURL: "https://example.test/runs/b", MessageID: root, Payload: `{"text":"Updated","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Updated block"}}]}`}); err != nil {
 		t.Fatal(err)
 	}
 	restored := newSlackGateway()
-	restored.client, restored.channelID, restored.runURL, restored.checkpointPath = g.client, g.channelID, g.runURL, g.checkpointPath
+	restored.client, restored.channelID, restored.checkpointPath = g.client, g.channelID, g.checkpointPath
 	restored.loadCheckpoint()
-	question := gatewaysdk.HumanInputRecord{ThreadID: "chain", MissionID: "c", MissionName: "Review", ToolCallID: "q", Question: "Ready?"}
+	question := gatewaysdk.HumanInputRecord{ThreadID: "chain", MissionID: "c", RunURL: "https://example.test/runs/c", MissionName: "Review", ToolCallID: "q", Question: "Ready?"}
 	if err := restored.postQuestion(ctx, question); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +57,7 @@ func TestMissionListPreservesRootAcrossEditsAndRestart(t *testing.T) {
 	if len(calls()) != before {
 		t.Fatal("duplicate question changed root")
 	}
-	if err := restored.postNotification(ctx, gatewaysdk.NotificationRecord{ThreadID: "chain", MissionID: "c", Event: "mission_completed"}); err != nil {
+	if err := restored.postNotification(ctx, gatewaysdk.NotificationRecord{ThreadID: "chain", MissionID: "c", RunURL: "https://example.test/runs/c", Event: "mission_completed"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(calls()) != before+1 {
@@ -67,7 +66,7 @@ func TestMissionListPreservesRootAcrossEditsAndRestart(t *testing.T) {
 	if len(restored.readCheckpoint().Conversations["chain"].Missions) != 3 {
 		t.Fatal("mission list not persisted")
 	}
-	if _, err := restored.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "d", Payload: `{"text":"Final","root":true}`}); err != nil {
+	if _, err := restored.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "d", RunURL: "https://example.test/runs/d", Payload: `{"text":"Final","root":true}`}); err != nil {
 		t.Fatal(err)
 	}
 	latest := calls()[len(calls())-1]
@@ -80,7 +79,7 @@ func TestMissionListRetriesFailedRefreshAfterRestart(t *testing.T) {
 	g, _ := editTestGateway(t)
 	ctx := context.Background()
 	g.checkpointPath = filepath.Join(t.TempDir(), "checkpoint.json")
-	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "a", Payload: `{"text":"Keep this body"}`}); err != nil {
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "a", RunURL: "https://example.test/runs/a", Payload: `{"text":"Keep this body"}`}); err != nil {
 		t.Fatal(err)
 	}
 	var attempts atomic.Int32
@@ -93,7 +92,7 @@ func TestMissionListRetriesFailedRefreshAfterRestart(t *testing.T) {
 				return
 			}
 			text := r.Form.Get("text")
-			if !strings.HasPrefix(text, "Keep this body\n") || strings.Count(text, "*b*") != 1 {
+			if !strings.HasPrefix(text, "Keep this body\n") || strings.Count(text, "runs/b|") != 1 {
 				t.Errorf("bad retried footer: %s", text)
 			}
 		}
@@ -101,7 +100,7 @@ func TestMissionListRetriesFailedRefreshAfterRestart(t *testing.T) {
 	}))
 	defer api.Close()
 	g.client = slack.New("x", slack.OptionAPIURL(api.URL+"/"))
-	req := gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "b", Payload: `{"text":"Reply"}`}
+	req := gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "b", RunURL: "https://example.test/runs/b", Payload: `{"text":"Reply"}`}
 	if _, err := g.postMessage(ctx, req); err == nil {
 		t.Fatal("expected refresh failure")
 	}
@@ -113,5 +112,33 @@ func TestMissionListRetriesFailedRefreshAfterRestart(t *testing.T) {
 	}
 	if attempts.Load() != 2 || restored.readCheckpoint().Conversations["chain"].FooterDirty {
 		t.Fatal("pending footer not retried and cleared")
+	}
+}
+
+func TestExistingMissionGetsSuppliedLinkWithoutDuplicate(t *testing.T) {
+	g, calls := editTestGateway(t)
+	ctx := context.Background()
+	root, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "a", Payload: `{"text":"Body"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(calls()[0].text, "<http") {
+		t.Fatal("invented a URL")
+	}
+	rec := gatewaysdk.NotificationRecord{ThreadID: "chain", MissionID: "a", MissionName: "Triage", RunURL: "https://cc.example/instances/1/runs/a", Event: "mission_completed"}
+	if err := g.postNotification(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.conversations["chain"].Missions) != 1 {
+		t.Fatal("duplicated existing run")
+	}
+	if lines := g.requestLines(root); lines != "*<https://cc.example/instances/1/runs/a|Triage>*" {
+		t.Fatalf("supplied link/name not rendered: %s", lines)
+	}
+	if _, err := g.postMessage(ctx, gatewaysdk.PostMessageRequest{ThreadID: "chain", MissionID: "a", Payload: `{"text":"Later","root":true}`}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(calls()[len(calls())-1].text, "runs/a|Triage>") {
+		t.Fatal("missing metadata erased known link")
 	}
 }

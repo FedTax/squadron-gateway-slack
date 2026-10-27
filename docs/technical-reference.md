@@ -15,8 +15,9 @@ The gateway appends its observed run list after the root's `text`, plus
 `Requester: <@user>` for starts from `/squadron`. With `blocks`, these appear
 in a final `context` block. Each mission ID is listed once, in first-seen order.
 A new run's post, edit, question or notification refreshes the list while
-preserving the current root body. Run links use `run_url`; labels use the
-mission name when supplied, otherwise the run ID.
+preserving the current root body. Run links use the supplied URL; labels use
+the mission name when supplied, otherwise the run ID. Runs without a supplied URL appear as
+plain text. Later events can supply a missing name or link.
 
 Every post returns the ID of the message it created or replaced, as
 `<channel>/<ts>`: the new top-level message, the reply, or the rewritten
@@ -73,7 +74,7 @@ removed.
 | State | Purpose |
 | ----- | ------- |
 | `latest` | Newest processed question event time, used for catch-up. Only moves forward. |
-| `conversations` | Mission thread ID → Slack root reference, body text/blocks, observed run IDs and formatted lines, optional requester, and pending footer update. Preserves the conversation and its run list across restarts. |
+| `conversations` | Mission thread ID → Slack root reference, body text/blocks, observed run IDs, names and URLs, optional requester, and pending footer update. Restores the conversation and run list on startup when the checkpoint file is available. |
 | `messages` | Tool call ID → posted question's channel and timestamp. Prevents duplicate questions within the process and locates them for answer edits. In memory only; questions posted before restart cannot be edited from this map. |
 
 Only conversations started through `/squadron` have a requester line. Each run

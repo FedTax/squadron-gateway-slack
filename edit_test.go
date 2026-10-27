@@ -140,12 +140,12 @@ func TestEditUploadsItsAttachmentsIntoTheRunsThread(t *testing.T) {
 func TestEditOfARequestRootKeepsTheGatewayLines(t *testing.T) {
 	g, calls := editTestGateway(t)
 	root := slackThreadRef("CTEST", "1700000000.000009")
-	g.conversations["run-1"] = &conversation{Root: root, Missions: []missionEntry{{ID: "run-1", Line: "*rate_triage* · run-1"}}, Requester: "UTEST"}
+	g.conversations["run-1"] = &conversation{Root: root, Missions: []missionEntry{{ID: "run-1", Name: "rate_triage"}}, Requester: "UTEST"}
 
 	if err := g.editMessage(context.Background(), gatewaysdk.EditMessageRequest{MissionID: "run-1", ThreadID: "run-1", MessageID: root, Payload: `{"text":"Status: done"}`}); err != nil {
 		t.Fatal(err)
 	}
-	if got := calls()[0].text; got != "Status: done\n*rate_triage* · run-1\nRequester: <@UTEST>" {
+	if got := calls()[0].text; got != "Status: done\n*rate_triage* (run `run-1`)\nRequester: <@UTEST>" {
 		t.Errorf("an edit of a /squadron root must keep the mission and requester lines; got %q", got)
 	}
 }

@@ -188,7 +188,7 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 	missionThreadID := uuid.NewString()
 	unlock := g.lockConversation(missionThreadID)
 	defer unlock()
-	missionID, err := g.mcp.startMission(ctx, form.Mission, inputs, missionThreadID)
+	started, err := g.mcp.startMission(ctx, form.Mission, inputs, missionThreadID)
 	if err != nil {
 		if errs := startFieldErrors(cb, err); errs != nil {
 			g.ack(req, slack.NewErrorsViewSubmissionResponse(errs))
@@ -210,7 +210,8 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 	if dm {
 		target = cb.User.ID
 	}
-	run := g.missionLine(form.Mission, missionID)
+	missionID := started.MissionID
+	run := missionLine(form.Mission, missionID, started.RunURL)
 	channel, ts, err := g.client.PostMessageContext(ctx, target,
 		slack.MsgOptionText(run+"\n"+requesterText(cb.User.ID), false))
 	if err != nil {
@@ -218,7 +219,7 @@ func (g *slackGateway) onStartSubmitted(ctx context.Context, req *socketmode.Req
 		return
 	}
 	thread := slackThreadRef(channel, ts)
-	g.rememberMission(missionThreadID, missionID, form.Mission)
+	g.rememberMission(missionThreadID, missionID, form.Mission, started.RunURL)
 	g.rememberRequest(missionThreadID, thread, cb.User.ID)
 	g.rememberRootContent(thread, "", nil)
 }

@@ -112,7 +112,6 @@ post says is up to the mission.
 | `checkpoint_path` | optional | Where the gateway saves its state across restarts. Defaults to `./.squadron-slack-gateway.json`. |
 | `mcp_url`         | optional | Squadron MCP host endpoint, e.g. `http://localhost:8090/mcp`. Needed to start missions from Slack. |
 | `mcp_token`       | optional | The MCP host's `secret`. Use a `secret` variable. |
-| `run_url`         | optional | Link to a run's page, with `{mission_id}` where the run id goes. The mission name on the top-level message links there. |
 
 ## Starting a mission
 
@@ -141,7 +140,7 @@ input its `value`.
      default channel if it names none. A question can't name a channel, so a
      run whose first message is a question opens in the default channel.
 2. **The top-level message.** The gateway appends a list of runs it has seen in
-   the conversation, with each run listed once. Links use `run_url` when set;
+   the conversation, with each run listed once. Links use the supplied run URL;
    labels use the mission name when supplied, otherwise the run ID. Starts from
    `/squadron` also show `Requester: @you`. New runs refresh the list while
    preserving the message body, and root replacements keep the list and requester.

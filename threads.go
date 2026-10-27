@@ -22,11 +22,12 @@ type conversation struct {
 
 type missionEntry struct {
 	ID   string `json:"id"`
-	Line string `json:"line"`
+	Name string `json:"name,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // rememberMission keeps one entry per run, in first-seen order.
-func (g *slackGateway) rememberMission(threadID, missionID, name string) {
+func (g *slackGateway) rememberMission(threadID, missionID, name, runURL string) {
 	if threadID == "" || missionID == "" {
 		return
 	}
@@ -37,15 +38,27 @@ func (g *slackGateway) rememberMission(threadID, missionID, name string) {
 		c = &conversation{}
 		g.conversations[threadID] = c
 	}
-	for _, m := range c.Missions {
-		if m.ID == missionID {
-			return
+	for i := range c.Missions {
+		m := &c.Missions[i]
+		if m.ID != missionID {
+			continue
 		}
+		changed := false
+		if name != "" && m.Name != name {
+			m.Name = name
+			changed = true
+		}
+		if runURL != "" && m.URL != runURL {
+			m.URL = runURL
+			changed = true
+		}
+		if changed {
+			c.FooterDirty = true
+			g.writeCheckpointLocked()
+		}
+		return
 	}
-	if name == "" {
-		name = missionID
-	}
-	c.Missions = append(c.Missions, missionEntry{ID: missionID, Line: g.missionLine(name, missionID)})
+	c.Missions = append(c.Missions, missionEntry{ID: missionID, Name: name, URL: runURL})
 	c.FooterDirty = true
 	g.writeCheckpointLocked()
 }
@@ -192,7 +205,7 @@ func conversationLines(c *conversation) string {
 	}
 	var lines []string
 	for _, m := range c.Missions {
-		lines = append(lines, m.Line)
+		lines = append(lines, missionLine(m.Name, m.ID, m.URL))
 	}
 	if c.Requester != "" {
 		lines = append(lines, requesterText(c.Requester))
@@ -200,13 +213,18 @@ func conversationLines(c *conversation) string {
 	return strings.Join(lines, "\n")
 }
 
-// missionLine names a run on its request's top-level message, linked to
-// the run's page when run_url is set so it can be opened from Slack.
-func (g *slackGateway) missionLine(mission, missionID string) string {
-	if g.runURL == "" {
-		return "*" + mission + "* (run `" + missionID + "`)"
+// missionLine renders a supplied run link, or plain attribution when absent.
+func missionLine(name, missionID, runURL string) string {
+	if name == "" {
+		name = missionID
 	}
-	return "*<" + strings.ReplaceAll(g.runURL, "{mission_id}", missionID) + "|" + mission + ">*"
+	if runURL != "" {
+		return "*<" + runURL + "|" + name + ">*"
+	}
+	if name == missionID {
+		return "Run `" + missionID + "`"
+	}
+	return "*" + name + "* (run `" + missionID + "`)"
 }
 
 func requesterText(user string) string {

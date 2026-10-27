@@ -18,7 +18,6 @@
 // Optional settings:
 //
 //	checkpoint_path = "/abs/path/to/checkpoint.json"   // default: ./.squadron-slack-gateway.json
-//	run_url         = "https://…/{mission_id}"         // links the mission name to its run
 //
 // The checkpoint stores the latest processed question event time and
 // conversation records for catch-up and message routing after a restart.

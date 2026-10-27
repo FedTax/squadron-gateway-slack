@@ -29,9 +29,6 @@ type slackGateway struct {
 	// conversations is keyed by Squadron mission thread: a chain of related runs.
 	conversations map[string]*conversation
 
-	// run_url: the run page link template, with {mission_id}.
-	runURL string
-
 	// nil when mcp_url isn't set: missions cannot be started from Slack.
 	mcp *squadronMCP
 
@@ -82,7 +79,6 @@ func (g *slackGateway) Configure(ctx context.Context, settings map[string]string
 	if mcpURL := strings.TrimSpace(settings["mcp_url"]); mcpURL != "" {
 		g.mcp = &squadronMCP{url: mcpURL, token: strings.TrimSpace(settings["mcp_token"])}
 	}
-	g.runURL = strings.TrimSpace(settings["run_url"])
 	g.loadCheckpoint()
 
 	api2 := slack.New(botToken, slack.OptionAppLevelToken(appToken))

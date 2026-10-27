@@ -45,7 +45,7 @@ func (g *slackGateway) postQuestion(ctx context.Context, rec gatewaysdk.HumanInp
 		return fmt.Errorf("slack client not initialized")
 	}
 
-	g.rememberMission(rec.ThreadID, rec.MissionID, rec.MissionName)
+	g.rememberMission(rec.ThreadID, rec.MissionID, rec.MissionName, rec.RunURL)
 	if err := g.refreshRoot(ctx, rec.ThreadID); err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (g *slackGateway) postNotification(ctx context.Context, rec gatewaysdk.Noti
 		return fmt.Errorf("slack client not initialized")
 	}
 	body := buildNotificationBody(rec)
-	g.rememberMission(rec.ThreadID, rec.MissionID, rec.MissionName)
+	g.rememberMission(rec.ThreadID, rec.MissionID, rec.MissionName, rec.RunURL)
 	if err := g.refreshRoot(ctx, rec.ThreadID); err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func (g *slackGateway) postMessage(ctx context.Context, req gatewaysdk.PostMessa
 		channel = g.resolveNotifyChannel(ctx, client, p.Channel, channel)
 	}
 
-	g.rememberMission(req.ThreadID, req.MissionID, "")
+	g.rememberMission(req.ThreadID, req.MissionID, "", req.RunURL)
 	var lines string
 	if p.Root || thread == "" {
 		lines = g.threadLines(req.ThreadID)
@@ -270,7 +270,7 @@ func (g *slackGateway) editMessage(ctx context.Context, req gatewaysdk.EditMessa
 	if question {
 		return fmt.Errorf("message %s is a question; it changes when it's answered", req.MessageID)
 	}
-	g.rememberMission(req.ThreadID, req.MissionID, "")
+	g.rememberMission(req.ThreadID, req.MissionID, "", req.RunURL)
 	if req.MessageID != g.threadForMissionThread(req.ThreadID) {
 		if err := g.refreshRoot(ctx, req.ThreadID); err != nil {
 			return err

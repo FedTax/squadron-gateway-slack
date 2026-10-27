@@ -30,4 +30,4 @@ require (
 	google.golang.org/protobuf v1.36.4 // indirect
 )
 
-replace github.com/mlund01/squadron-gateway-sdk => github.com/FedTax/squadron-gateway-sdk v0.0.0-20261027155636-db3ce0558426
+replace github.com/mlund01/squadron-gateway-sdk => github.com/FedTax/squadron-gateway-sdk v0.0.0-20261027194028-b0ed0f7c42fc

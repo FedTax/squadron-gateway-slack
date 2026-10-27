@@ -133,7 +133,7 @@ func TestDMStartKeepsRequestInDM(t *testing.T) {
 	})
 	missions.AddTool(mcp.NewTool("run_mission"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		startedThreadID, _ = req.GetArguments()["thread_id"].(string)
-		return mcp.NewToolResultText(`{"missionId":"run-triage"}`), nil
+		return mcp.NewToolResultText(`{"missionId":"run-triage","runUrl":"https://cc.example/runs/run-triage"}`), nil
 	})
 	missionAPI := httptest.NewServer(server.NewStreamableHTTPServer(missions))
 	defer missionAPI.Close()
@@ -205,7 +205,7 @@ func TestChannelStartStaysInItsChannelAndSharesTheConversation(t *testing.T) {
 	missions := server.NewMCPServer("mock-squadron", "test", server.WithToolCapabilities(true))
 	missions.AddTool(mcp.NewTool("run_mission"), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		startedThreadID, _ = req.GetArguments()["thread_id"].(string)
-		return mcp.NewToolResultText(`{"missionId":"run-triage"}`), nil
+		return mcp.NewToolResultText(`{"missionId":"run-triage","runUrl":"https://cc.example/runs/run-triage"}`), nil
 	})
 	missionAPI := httptest.NewServer(server.NewStreamableHTTPServer(missions))
 	defer missionAPI.Close()
@@ -213,7 +213,6 @@ func TestChannelStartStaysInItsChannelAndSharesTheConversation(t *testing.T) {
 	g := newSlackGateway()
 	g.client = slack.New("xoxb-test", slack.OptionAPIURL(api.URL+"/"), slack.OptionHTTPClient(api.Client()))
 	g.channelID = "CTEST"
-	g.runURL = "https://cc.example/runs/{mission_id}"
 	g.mcp = &squadronMCP{url: missionAPI.URL + "/mcp"}
 	ctx := context.Background()
 

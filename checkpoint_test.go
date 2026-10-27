@@ -64,7 +64,7 @@ func TestCheckpointPersistsThreads(t *testing.T) {
 	g := newSlackGateway()
 	g.checkpointPath = filepath.Join(t.TempDir(), "cp.json")
 	root := slackThreadRef("CTEST", "1700000000.000100")
-	g.rememberMission("chain-1", "run-1", "rate_triage")
+	g.rememberMission("chain-1", "run-1", "rate_triage", "")
 	g.rememberRequest("chain-1", root, "U1")
 	restored := newSlackGateway()
 	restored.checkpointPath = g.checkpointPath
